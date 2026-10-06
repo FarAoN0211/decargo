@@ -60,7 +60,7 @@ case "${1:-}" in
     if [ -f .env ]; then echo ".env ya existe; no se toca."; else
       # Volúmenes de una instalación anterior (carpeta borrada o copiada sin .env): sus contraseñas están en el .env antiguo
       # y con un .env nuevo la base de datos rechaza la conexión. Nunca se borran solos.
-      OLD=$(for v in $(grep -oE 'name: [a-z0-9_]+_(pgdata|documents|backups)$' docker-compose.yml | cut -d' ' -f2); do docker volume inspect "$v" >/dev/null 2>&1 && echo "$v"; done | xargs)
+      OLD=$(for v in $(grep -oE 'name: [a-z0-9_]+_(pgdata|documents|backups)$' docker-compose.yml | cut -d' ' -f2); do if docker volume inspect "$v" >/dev/null 2>&1; then echo "$v"; fi; done | xargs)
       if [ -n "$OLD" ]; then
         cat >&2 <<EOF
 ERROR: este equipo ya tiene datos de una instalación anterior de DECARGO (volúmenes de Docker: $OLD),
