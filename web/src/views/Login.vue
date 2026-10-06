@@ -3,12 +3,10 @@ import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ApiError, auth, homeFor, login } from '../api';
 import { messageFor } from '../errors';
-import { canScanQr, native } from '../native';
 
 const router = useRouter();
 const username = ref(''), password = ref(''), totp = ref('');
 const needTotp = ref(false), busy = ref(false), error = ref(''), info = ref('');
-const scan = canScanQr();
 
 async function submit(): Promise<void> {
   busy.value = true; error.value = ''; info.value = '';
@@ -37,7 +35,6 @@ async function submit(): Promise<void> {
         <button class="btn btn-primary btn-block" :disabled="busy">{{ busy ? 'Entrando…' : 'Entrar' }}</button>
       </form>
       <p class="muted small">¿Primera vez? <RouterLink to="/activar">Activar mi cuenta con el código de la oficina</RouterLink></p>
-      <button v-if="scan" type="button" class="btn btn-block" @click="native.scanActivationQr()">Escanear QR de activación</button>
     </div>
   </main>
 </template>
