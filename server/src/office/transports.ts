@@ -110,6 +110,7 @@ export async function createTransport(pool: Pool, storage: LocalStorage, actor: 
   if (i.adr !== undefined && i.adr !== null && typeof i.adr !== 'boolean') throw bad('adr');
   const adr = i.adr === true, adrDetail = adr ? optText(i.adr_detail, 'adr_detail', 120) : null;
   const carrierAuthIn = optText(i.carrier_authorization, 'carrier_authorization', 30);
+  if (carrierAuthIn !== null && !/^[A-Za-z0-9 ./-]{3,30}$/.test(carrierAuthIn)) throw bad('carrier_authorization');
   if (!packages && units !== null) packages = `${units} ${packaging ?? (units === 1 ? 'bulto' : 'bultos')}`;   // «Nº y clase de bultos» de la carta de porte
   const loadedPallets = palletsTotal(originStops);
   if (!packages && loadedPallets) packages = palletsLabel(loadedPallets);     // casilla 12: si no se indican los bultos, se usa el total de palets cargados

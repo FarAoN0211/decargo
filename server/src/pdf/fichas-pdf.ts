@@ -12,7 +12,8 @@ import { ASSETS, DecaPdfInput, esDate, temperatureLine, wrap } from './deca-pdf'
  * Los datos opcionales vacíos no se imprimen.
  */
 const INK = rgb(0.07, 0.24, 0.31), ACCENT = rgb(0.17, 0.48, 0.42), MUTED = rgb(0.33, 0.38, 0.41), BLACK = rgb(0.08, 0.08, 0.08), RED = rgb(0.7, 0.1, 0.1);
-const PW = 595.28, PH = 841.89, M = 26, W = PW - 2 * M, GAP = 7, PAD = 7, R = 6;
+const PW = 595.28, PH = 841.89, M = 26, W = PW - 2 * M, PAD = 7, R = 6;
+let GAP = 7;   // separación entre fichas (se reduce con letra pequeña)
 const KIND: Record<string, string> = { TRACTORA: 'Tractora', SEMIRREMOLQUE: 'Semirremolque', REMOLQUE: 'Remolque', RIGIDO: 'Camión rígido' };
 const when = (iso: string): string => new Date(iso).toLocaleString('es-ES', { timeZone: 'Europe/Madrid', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 const money = (v: string | null | undefined): string => (v ? `${Number(v).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €` : '');
@@ -44,9 +45,8 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Buffer> {
   const stopFields = (s: (typeof stopsO)[number], n: number, total: number, kind: 'carga' | 'descarga'): Field[] => {
     const extra = [s.pallets != null ? pal(s.pallets) : '', s.refs?.length ? `${s.refs.length > 1 ? 'Referencias' : 'Ref.'}: ${s.refs.join(', ')}` : '', s.seals?.length ? `${s.seals.length > 1 ? 'Precintos' : 'Precinto'}: ${s.seals.join(', ')}` : ''].filter(Boolean).join(' · ');
     const label = `${kind === 'carga' ? 'Lugar de carga' : 'Lugar de entrega'}${total > 1 ? ` ${n}` : ''}${s.time ? ` · hora ${s.time}` : ''}`;
-    return [[label, [s.party ?? '', s.address, extra].filter(Boolean).join('\n')]];
+    return [[label, [s.party ?? '', [s.address, extra].filter(Boolean).join(' · ')].filter(Boolean).join('\n')]];   // dos líneas por lugar
   };
-  const dateField: Field = ['Fecha de realización del transporte', date];
   const totalLine = (l: typeof stopsO, label: string): Field[] => {
     const withP = l.filter((s) => s.pallets != null);
     return l.length > 1 && withP.length ? [[label, pal(withP.reduce((a, s) => a + (s.pallets ?? 0), 0))]] : [];
@@ -120,27 +120,29 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Buffer> {
   };
 
   // Bloques en orden. Cada uno dibuja en c.y y devuelve su altura.
-  const qrCell = 110;
+  /** El recuadro del QR se ajusta al tamaño de letra (con 6 pt, 84 pt: el QR sigue midiendo más de 2 cm). */
+  const qrCellFor = (s: number): number => Math.max(84, Math.min(110, 84 + (s - 6) * 10));
   const blocks: Array<(c: Ctx) => number> = [
     // Cabecera: datos del documento + QR
     (c) => {
-      const leftW = W - qrCell - GAP;
+      const qrCell = qrCellFor(c.s), leftW = W - qrCell - GAP;
       const head: Field[][] = [
         [['Referencia', d.reference ?? ''], ['Creado', i.blank ? '' : when(i.createdAt.toISOString())]],
-        [['Versión', i.blank ? '' : String(i.versionNo)], ['Última modificación', i.blank ? '' : when(i.modifiedAt.toISOString())]]
+        [['f) Fecha de realización del transporte', date], ['Versión', i.blank ? '' : String(i.versionNo)]],
+        [['Última modificación', i.blank ? '' : when(i.modifiedAt.toISOString())]]
       ];
       const urlF: Field[] = i.blank ? [] : [['Documento en línea (también en el QR)', i.url]];
       const page = c.page; c.page = null;
-      const tH = c.s + 9, cw = (leftW - 2 * PAD - 8) / 2;
-      const inner = Math.max(colH(head[0], cw, c.s), colH(head[1], cw, c.s)) + colH(urlF, leftW - 2 * PAD, c.s);
+      const tH = c.s + 9, cw = (leftW - 2 * PAD - 16) / 3;
+      const headH = Math.max(...head.map((col) => colH(col, cw, c.s)));
+      const inner = headH + colH(urlF, leftW - 2 * PAD, c.s);
       const h = Math.max(tH + PAD + inner + PAD, qrCell);
       c.page = page;
       if (c.page) {
         roundRect(c.page, M, c.y, leftW, h);
         c.page.drawText('Documento de Control Administrativo (DeCA)', { x: M + PAD, y: c.y - PAD - c.s - 2, size: c.s + 3, font: F.bold, color: INK });
-        drawFields(c, head[0], M + PAD, c.y - PAD - tH, cw);
-        drawFields(c, head[1], M + PAD + cw + 8, c.y - PAD - tH, cw);
-        drawFields(c, urlF, M + PAD, c.y - PAD - tH - Math.max(colH(head[0], cw, c.s), colH(head[1], cw, c.s)), leftW - 2 * PAD);
+        head.forEach((col, k) => drawFields(c, col, M + PAD + k * (cw + 8), c.y - PAD - tH, cw));
+        drawFields(c, urlF, M + PAD, c.y - PAD - tH - headH, leftW - 2 * PAD);
         const qx = M + leftW + GAP;
         roundRect(c.page, qx, c.y, qrCell, h);
         if (!i.blank) {
@@ -167,12 +169,12 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Buffer> {
         { w, title: consignees.length > 1 ? 'Destinatarios' : 'Destinatario', cols: [cons] }
       ]);
     },
-    (c) => sectionTitle(c, 'c) Origen y destino · e) fecha de realización'),
+    (c) => sectionTitle(c, 'c) Origen y destino'),
     (c) => {
       const w = (W - GAP) / 2;
       return row(c, [
-        { w, title: 'Carga', cols: [[dateField, ...stopsO.flatMap((s, n) => stopFields(s, n + 1, stopsO.length, 'carga')), ...totalLine(stopsO, 'Total cargado')]] },
-        { w, title: 'Entrega', cols: [[dateField, ...stopsD.flatMap((s, n) => stopFields(s, n + 1, stopsD.length, 'descarga')), ...totalLine(stopsD, 'Total entregado')]] }
+        { w, title: 'Carga', cols: [[...stopsO.flatMap((s, n) => stopFields(s, n + 1, stopsO.length, 'carga')), ...totalLine(stopsO, 'Total cargado')]] },
+        { w, title: 'Entrega', cols: [[...stopsD.flatMap((s, n) => stopFields(s, n + 1, stopsD.length, 'descarga')), ...totalLine(stopsD, 'Total entregado')]] }
       ]);
     },
     (c) => sectionTitle(c, 'g) Vehículo y conductor'),
@@ -188,17 +190,18 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Buffer> {
       goods.forEach((f, k) => cols[k % 3].push(f));
       return row(c, [{ w: W, title: '', cols }]);
     },
-    (c) => sectionTitle(c, 'h) Observaciones'),
+    (c) => sectionTitle(c, d.aecRef ? 'e) Autorización especial · h) Observaciones' : 'h) Observaciones'),
     (c) => row(c, [{ w: W, title: '', cols: [[['Observaciones, reservas y otras indicaciones', remarks || (i.blank ? '' : 'Sin observaciones.')]]] }])
   ];
 
   const TITLES = new Set([1, 3, 5, 7, 9]);   // índices de los bloques que son títulos de sección
   // ---------------------------------------------------------------- elegir el tamaño: el mayor con el que todo cabe en una página
   const top0 = PH - M - (banner ? 20 : 0), bottom = M + 16;
-  const measure = (s: number): number => { const c: Ctx = { page: null, s, y: 0 }; return blocks.reduce((a, b) => a + b(c) + GAP, 0); };
+  const measure = (s: number): number => { GAP = s < 7 ? 5 : 7; const c: Ctx = { page: null, s, y: 0 }; return blocks.reduce((a, b) => a + b(c) + GAP, 0); };
   let s = 8.6;
   // Por debajo de 6 pt ya no se lee bien: en ese caso extremo, mejor una segunda página.
   while (s > 6 && measure(s) > top0 - bottom) s = Math.round((s - 0.2) * 10) / 10;
+  GAP = s < 7 ? 5 : 7;
 
   // ---------------------------------------------------------------- dibujar
   const pages: PDFPage[] = [];
