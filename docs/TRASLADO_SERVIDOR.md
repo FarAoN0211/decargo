@@ -10,7 +10,7 @@ No hay que editar ficheros a mano. Hay dos herramientas:
 | Dirección pública de los DeCA (`https://decargo.tuempresa.com`) | Web → Configuración (se guarda en la base de datos y **viaja con las copias de seguridad**). También: `./deca config set-domain https://…` |
 | IP local en la que publican `api`, `docs` y `web` | `./deca setup` (o `./deca config set-ip 192.168.1.50`) |
 | Puertos (`API_PORT`, `DOCS_PORT`, `WEB_PORT`) | `.env`; `./deca ports` y `./deca setup` avisan si están ocupados |
-| Ruta de la aplicación (`https://dominio/<ruta>/`; la raíz es la web pública) | `.env` → `DECARGO_APP_PATH`, creada una vez por `./deca init`/`./deca up`. Cambiarla: `./deca config set-app-path <ruta>\|nueva` y `./deca up`. Al trasladar, **copia el mismo valor** al `.env` nuevo para que los favoritos sigan valiendo (las rutas antiguas `/login`, `/conductor`… redirigen solas) |
+| Ruta de la aplicación (`https://dominio/<ruta>/`; la raíz «/» lleva a ella) | `.env` → `DECARGO_APP_PATH`, creada una vez por `./deca init`/`./deca up`. Cambiarla: `./deca config set-app-path <ruta>\|nueva` y `./deca up`. Al trasladar, **copia el mismo valor** al `.env` nuevo para que los favoritos sigan valiendo (las rutas antiguas `/login`, `/conductor`… redirigen solas) |
 | Botón «Probar DECARGO» | `./deca config set-demo-url https://…` (vacío = «Próximamente») |
 | Proxy con HTTPS (NPM u otro) | fuera de DECARGO: dominio → `web`; ruta `/d/` → `docs` |
 

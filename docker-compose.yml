@@ -85,6 +85,7 @@ services:
       # Web pública: ruta de la aplicación (para la app Android y el botón «Acceder») y del entorno de demostración.
       DECARGO_APP_PATH: ${DECARGO_APP_PATH:-}
       DECARGO_DEMO_URL: ${DECARGO_DEMO_URL:-}
+      DECARGO_PUBLIC_SITE: ${DECARGO_PUBLIC_SITE:-0}
       # La API solo confía en X-Forwarded-For si viene de la red interna donde vive `web` (la subred de `back`).
       TRUSTED_PROXY_CIDRS: 10.231.77.0/24
     volumes:
@@ -135,6 +136,10 @@ services:
   web:
     build:
       context: ./web
+      additional_contexts:
+        server: ./server      # la demo usa el mismo generador de DeCA que el servidor (server/src/pdf)
+      args:
+        PUBLIC_SITE: ${DECARGO_PUBLIC_SITE:-0}   # 1 = construir la web pública y la demo (solo el sitio del proyecto)
     image: decargo-web:${DECARGO_VERSION:-dev}
     restart: unless-stopped
     read_only: true
@@ -144,6 +149,7 @@ services:
       DECARGO_APP_PATH: ${DECARGO_APP_PATH:?falta DECARGO_APP_PATH (ejecuta ./deca up)}
       NGINX_ENVSUBST_OUTPUT_DIR: /tmp/nginx-conf
       NGINX_ENVSUBST_FILTER: ^DECARGO_
+      DECARGO_PUBLIC_SITE: ${DECARGO_PUBLIC_SITE:-0}
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     dns: ["127.0.0.1"]          # sin DNS externo; el DNS interno de Docker (api) sigue funcionando

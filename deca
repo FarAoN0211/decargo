@@ -143,7 +143,7 @@ case "${1:-}" in
     setenv() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else printf '%s=%s\n' "$1" "$2" >> .env; fi; }
     case "${2:-show}" in
       show) $DC exec -T api node dist/cli.js public-url 2>/dev/null | sed 's/^/Dirección vigente (la que mandan los DeCA nuevos): /' || true
-            grep -E '^(PUBLIC_DOCS_BASE_URL|ALLOW_INSECURE_PUBLIC_URL|VAPID_SUBJECT|API_BIND|DOCS_BIND|WEB_BIND|API_PORT|DOCS_PORT|WEB_PORT|DECARGO_APP_PATH|DECARGO_DEMO_URL)=' .env ;;
+            grep -E '^(PUBLIC_DOCS_BASE_URL|ALLOW_INSECURE_PUBLIC_URL|VAPID_SUBJECT|API_BIND|DOCS_BIND|WEB_BIND|API_PORT|DOCS_PORT|WEB_PORT|DECARGO_APP_PATH|DECARGO_DEMO_URL|DECARGO_PUBLIC_SITE)=' .env ;;
       set-app-path)
         # Cambia la ruta interna de la aplicación. Las rutas antiguas de la app (/login, /conductor…) siguen redirigiendo a la nueva,
         # pero un favorito o un acceso directo a la ruta ANTERIOR dejará de funcionar: avisa antes a los usuarios.
@@ -152,6 +152,11 @@ case "${1:-}" in
         { [[ "$N" =~ $APP_PATH_RE ]] && ! [[ "${N,,}" =~ $RESERVED ]]; } || { echo "Uso: ./deca config set-app-path <ruta>|nueva   (16-64 letras, números, - o _; sin palabras reconocibles)" >&2; exit 2; }
         setenv DECARGO_APP_PATH "$N"
         echo "Ruta interna: /$N/  Siguiente: ./deca up (la app instalada y la web la toman solas al volver a abrirse)." ;;
+      set-public-site)
+        # Web pública del PROYECTO (presentación + demo). En una instalación de empresa debe estar desactivada (por defecto).
+        case "${3:-}" in on) setenv DECARGO_PUBLIC_SITE 1; echo "Web pública activada (presentación y demo). Siguiente: ./deca up" ;;
+          off) setenv DECARGO_PUBLIC_SITE 0; echo "Web pública desactivada: «/» lleva a la aplicación. Siguiente: ./deca up" ;;
+          *) echo "Uso: ./deca config set-public-site on|off" >&2; exit 2 ;; esac ;;
       set-demo-url)
         D="${3:-}"; { [ -z "$D" ] || [ "$D" = off ] || [[ "$D" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]]; } || { echo "Uso: ./deca config set-demo-url [https://demo.dominio/ruta | off]   (vacío = la demo incluida en /demo/; off = ocultar)" >&2; exit 2; }
         setenv DECARGO_DEMO_URL "$D"; echo "Botón «Probar DECARGO»: ${D:-la demo incluida (/demo/)}. Siguiente: ./deca up" ;;
@@ -170,7 +175,7 @@ case "${1:-}" in
         [[ "$IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ && "$IP" != "0.0.0.0" ]] || { echo "Uso: ./deca config set-ip 192.168.1.50   (la IP local de este equipo; nunca 0.0.0.0)" >&2; exit 2; }
         for n in API DOCS WEB; do setenv "${n}_BIND" "$IP"; done
         echo "api, docs y web publicarán en $IP. Siguiente: ./deca up, y apuntar el proxy (NPM) a esa IP." ;;
-      *) echo "uso: ./deca config show|set-domain <https://dominio>|set-ip <ip>|set-app-path <ruta|nueva>|set-demo-url [https://…]" >&2; exit 2 ;;
+      *) echo "uso: ./deca config show|set-domain <https://dominio>|set-ip <ip>|set-app-path <ruta|nueva>|set-public-site on|off|set-demo-url [https://…|off]" >&2; exit 2 ;;
     esac ;;
   reset-totp)  shift; $DC exec -T api node dist/cli.js reset-totp "$@" ;;   # autenticador perdido: borra el TOTP y revoca sesiones
   create-user) shift; $DC exec -T api node dist/cli.js create-user "$@" ;;   # imprime UNA VEZ el código de activación

@@ -70,7 +70,7 @@ WIP=$(grep -E '^WEB_BIND=' .env | cut -d= -f2-); WPORT=$(grep -E '^WEB_PORT=' .e
 PUB=$(grep -E '^PUBLIC_DOCS_BASE_URL=' .env | cut -d= -f2-)
 echo
 echo "${B}== DECARGO está en marcha ==${N}"
-echo "  Web pública (en la red local):  http://${WIP}:${WPORT}/"
+echo "  DECARGO (en la red local):      http://${WIP}:${WPORT}/   (lleva a la aplicación)"
 echo "  Aplicación:                     http://${WIP}:${WPORT}/${APP}/   (activar cuenta: …/${APP}/activar)"
 echo "  Dirección pública de los DeCA:  ${PUB}"
 echo

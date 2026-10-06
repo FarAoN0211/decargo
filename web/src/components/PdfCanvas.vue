@@ -14,11 +14,13 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 const host = ref<HTMLElement | null>(null);
 const state = ref<'loading' | 'ok' | 'error'>('loading');
 let doc: pdfjs.PDFDocumentProxy | null = null;
-let resizeTimer = 0, lastWidth = 0;
+let resizeTimer = 0, lastWidth = 0, observer: ResizeObserver | null = null;
 
 async function render(): Promise<void> {
   if (!doc || !host.value) return;
-  const width = host.value.clientWidth; lastWidth = width;
+  const width = host.value.clientWidth;
+  if (width < 50) return;   // aún sin maquetar (p. ej. la ventana se está abriendo): se dibuja cuando tenga su ancho real
+  lastWidth = width;
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
   host.value.replaceChildren();
   for (let n = 1; n <= doc.numPages; n++) {
@@ -34,7 +36,7 @@ async function render(): Promise<void> {
 }
 const onResize = (): void => {
   window.clearTimeout(resizeTimer);
-  resizeTimer = window.setTimeout(() => { if (host.value && Math.abs(host.value.clientWidth - lastWidth) > 4) void render(); }, 250);
+  resizeTimer = window.setTimeout(() => { if (host.value && Math.abs(host.value.clientWidth - lastWidth) > 4) void render(); }, lastWidth ? 250 : 0);
 };
 
 onMounted(async () => {
@@ -42,10 +44,12 @@ onMounted(async () => {
     doc = await pdfjs.getDocument({ data: new Uint8Array(await props.blob.arrayBuffer()), isEvalSupported: false, enableXfa: false }).promise;
     state.value = 'ok'; emit('pages', doc.numPages);
     await nextTick(); await render();
-    window.addEventListener('resize', onResize);
+    // Vuelve a dibujar cuando cambia el ancho real del recuadro (al terminar de abrirse una ventana, al girar el móvil…).
+    if (host.value && 'ResizeObserver' in window) { observer = new ResizeObserver(onResize); observer.observe(host.value); }
+    else window.addEventListener('resize', onResize);
   } catch { state.value = 'error'; emit('failed'); }
 });
-onUnmounted(() => { window.removeEventListener('resize', onResize); void doc?.destroy(); });
+onUnmounted(() => { observer?.disconnect(); window.removeEventListener('resize', onResize); void doc?.destroy(); });
 </script>
 <template>
   <p v-if="state === 'loading'" class="muted">Preparando el documento…</p>

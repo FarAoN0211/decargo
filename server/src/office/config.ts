@@ -77,7 +77,9 @@ export async function checkPublicBase(pool: Pool, raw: unknown) {
     if (!addrs.length) return { url: base, checked: false, reason: 'dns', web: null, docs: null };
     if (!addrs.every(isPublicAddress)) return { url: base, checked: false, reason: 'privada', web: null, docs: null };
   }
-  const web = await probe(`${base}/`, (s, b) => s === 200 && b.includes('DECARGO'), 'La web de DECARGO responde en esta dirección.', 'Responde otra cosa distinta de DECARGO en «/».');
+  // Se comprueba la propia aplicación (/<ruta>/): «/» puede ser la web pública del proyecto o, en una empresa, una redirección a la aplicación.
+  const app = /^[A-Za-z0-9_-]{16,64}$/.test(process.env.DECARGO_APP_PATH ?? '') ? `/${process.env.DECARGO_APP_PATH}/` : '/';
+  const web = await probe(`${base}${app}`, (s, b) => s === 200 && b.includes('DECARGO'), 'La aplicación DECARGO responde en esta dirección.', 'En esta dirección no responde la aplicación DECARGO.');
   const docs = await probe(`${base}/d/${randomBytes(32).toString('base64url')}`, (s, b) => s === 404 && /not found/i.test(b) && !/<html/i.test(b), 'El servicio documental responde en «/d/».', 'La ruta «/d/» no llega al servicio documental: en el proxy, «/d/» debe ir a docs.');
   return { url: base, checked: true, reason: null, web, docs };
 }

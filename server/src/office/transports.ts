@@ -10,6 +10,7 @@ import { getPublicBase, showDriverInDeca, testMode } from '../common/settings';
 import { expiryCounts } from './documents';
 import { registerForTransport, resolveStops } from './parties';
 import type { DecaData } from '../pdf/deca-pdf';
+import { buildDecaData } from '../pdf/data';
 import { Actor, ApiError, actorStr } from '../identity/service';
 import { UUID_RE, addrParts, bad, isoDate, nif, optMultiline, optText, optUuid, palletsLabel, palletsTotal, stops, stopsText, text, weightKg, type Stop } from './validate';
 
@@ -42,32 +43,10 @@ interface TransportRow {
 interface Extra { companyAddress?: string | null; companyAuthorization?: string | null; driver?: DecaData['driver'] }
 const isoDay = (d: string | Date): string => (typeof d === 'string' ? d.slice(0, 10) : d.toISOString().slice(0, 10));
 
-/** Datos del art. 6 de la Orden FOM/2861/2012 tal como los imprime el generador de PDF real. */
+/** Datos del art. 6 de la Orden FOM/2861/2012 tal como los imprime el generador de PDF real (el mismo montaje que usa la demo: pdf/data.ts). */
 function decaData(t: TransportRow, v: VehicleSel, x: Extra = {}): DecaData {
   if (!v.tractor) throw new ApiError(409, 'vehicle_required');
-  const stopsO = t.origin.stops ?? [{ party: null, address: t.origin.text }], stopsD = t.destination.stops ?? [{ party: null, address: t.destination.text }];
-  const uniq = (l: string[]): string[] => Array.from(new Set(l));
-  /** Un lugar por parada (con sus palets); si dos paradas caen en la misma localidad se añade la empresa para distinguirlas. */
-  const loads = (l: Stop[]): Array<{ place: string; pallets: number | null; refs: string[]; seals: string[] }> => l.map((s) => {
-    const place = placeFrom(s), dup = l.filter((x) => placeFrom(x) === place).length > 1;
-    return { place: dup && s.party ? `${place} · ${s.party}` : place, pallets: s.pallets ?? null, refs: s.references ?? [], seals: s.seals ?? [] };
-  });
-  return {
-    originLoads: loads(stopsO), destinationLoads: loads(stopsD), palletsTotal: palletsTotal(stopsO),
-    consignees: stopsD.map((s) => ({ name: s.party, address: fullAddress(s), nif: s.nif ?? null })), originPlaces: uniq(stopsO.map((s) => placeFrom(s))), destinationPlaces: uniq(stopsD.map((s) => placeFrom(s))),
-    carrierAddress: t.carrier_address ?? x.companyAddress ?? null, priceEur: t.price_eur ?? null, packages: t.packages ?? null, loadReference: t.load_reference ?? null, temperature: t.temperature ?? null, driver: x.driver ?? null,
-    shipper: { name: t.shipper_name, nif: t.shipper_nif, address: t.shipper_address },
-    carrier: { name: t.carrier_name, nif: t.carrier_nif },
-    origin: t.origin.text, destination: t.destination.text, cargoDescription: t.cargo_description,
-    weightKg: t.weight_kg, altMagnitude: t.alt_magnitude?.text ?? null, aecRef: t.aec_ref,
-    transportDate: isoDay(t.transport_date), tractorPlate: v.tractor.plate, trailerPlate: v.trailer?.plate ?? null, remarks: t.remarks,
-    // Modelo DECARGO (fichas)
-    reference: t.reference ?? null, carrierAuthorization: t.carrier_authorization ?? x.companyAuthorization ?? null,
-    tractorKind: v.tractor.kind, trailerKind: v.trailer?.kind ?? null, units: t.units ?? null, packaging: t.packaging ?? null,
-    adr: t.adr ? { detail: t.adr_detail ?? null } : null,
-    originStops: stopsO.map((s) => ({ party: s.party, address: fullAddress(s), time: s.time ?? null, pallets: s.pallets ?? null, refs: s.references ?? [], seals: s.seals ?? [] })),
-    destinationStops: stopsD.map((s) => ({ party: s.party, address: fullAddress(s), time: s.time ?? null, pallets: s.pallets ?? null, refs: s.references ?? [], seals: s.seals ?? [] }))
-  };
+  return buildDecaData(t, { tractor: v.tractor, trailer: v.trailer }, x);
 }
 
 /** Datos del conductor para la casilla 9, SOLO si la empresa lo ha activado (DNI y teléfono salen de su ficha, descifrado en el servidor). */

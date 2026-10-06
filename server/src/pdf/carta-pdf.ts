@@ -1,9 +1,8 @@
-import { promises as fs } from 'node:fs';
-import * as path from 'node:path';
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, PDFFont, PDFPage, rgb } from 'pdf-lib';
 import QRCode from 'qrcode';
-import { ASSETS, DecaPdfInput, GREY, esDate, temperatureLine, wrap } from './deca-pdf';
+import { fontBytes } from './fonts';
+import { DecaPdfInput, GREY, esDate, temperatureLine, wrap } from './deca-pdf';
 
 /**
  * Modelo «Carta de porte» (documento de control con casillas numeradas, Orden FOM/2861/2012). Se genera NATIVO: texto real con fuente embebida y QR vectorial,
@@ -31,11 +30,12 @@ const uniq = (l: string[]): string[] => Array.from(new Set(l.filter(Boolean)));
 const pal = (n: number): string => `${n} ${n === 1 ? 'palet' : 'palets'}`;
 const money = (v: string | null | undefined): string => (v ? `${Number(v).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €` : '');
 
-export async function generateCartaPdf(i: DecaPdfInput): Promise<Buffer> {
+export async function generateCartaPdf(i: DecaPdfInput): Promise<Uint8Array> {
   const doc = await PDFDocument.create({ updateMetadata: false });
   doc.registerFontkit(fontkit);
-  const regular = await doc.embedFont(await fs.readFile(path.join(ASSETS, 'DejaVuSans.ttf')), { subset: true });
-  const bold = await doc.embedFont(await fs.readFile(path.join(ASSETS, 'DejaVuSans-Bold.ttf')), { subset: true });
+  const fb = await fontBytes();
+  const regular = await doc.embedFont(fb.regular, { subset: true });
+  const bold = await doc.embedFont(fb.bold, { subset: true });
   doc.setTitle(i.blank ? 'Carta de porte (formulario en blanco)' : `DeCA ${i.decaId} v${i.versionNo}`);
   doc.setSubject('Documento de control de transporte de mercancías por carretera (Orden FOM/2861/2012)');
   doc.setCreator('DECARGO'); doc.setProducer('DECARGO');
@@ -209,5 +209,5 @@ export async function generateCartaPdf(i: DecaPdfInput): Promise<Buffer> {
     page.drawText('Documento en línea (escanee el QR):', { x: M, y: iy, size: 7, font: regular, color: GREY });
     wrap(i.url, regular, 7, W - qrSize - 20).forEach((l, k) => page.drawText(l, { x: M, y: iy - 9 - k * 8.5, size: 7, font: regular }));
   }
-  return Buffer.from(await doc.save({ useObjectStreams: false }));
+  return doc.save({ useObjectStreams: false });
 }

@@ -31,7 +31,7 @@ cd decargo
 
 Guía completa, con el proxy https, las copias de seguridad y las actualizaciones: **[docs/INSTALACION.md](docs/INSTALACION.md)**.
 
-**App Android para conductores:** descárgala de [Releases](https://github.com/FarAoN0211/decargo/releases/latest) (cada versión indica su SHA-256) o desde la web pública de tu instalación.
+**App Android para conductores:** descárgala de [Releases](https://github.com/FarAoN0211/decargo/releases/latest) (cada versión indica su SHA-256) o desde la web pública del proyecto. Una instalación de empresa no publica ninguna web: solo la aplicación (ver docs/INSTALACION.md).
 
 ## Documentación
 | Documento | Contenido |

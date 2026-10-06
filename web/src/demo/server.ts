@@ -3,10 +3,23 @@
  * memoria de esta pestaña: se puede crear, editar, anular o archivar todo lo que permite la aplicación, y al RECARGAR la página
  * todo vuelve al estado original. No se envía nada al servidor de verdad ni se guarda nada en el navegador.
  */
-import { demoDecaPdf, demoQrSvg } from './pdf';
+import QRCode from 'qrcode';
+// El MISMO generador de DeCA y el MISMO montaje de datos que el servidor (se copian al construir la imagen; ver web/Dockerfile).
+import { buildDecaData } from '../shared/pdf/data';
+import { setFontProvider } from '../shared/pdf/fonts';
+import { generateFichasPdf } from '../shared/pdf/fichas-pdf';
+import { generateCartaPdf } from '../shared/pdf/carta-pdf';
+import { generateDecaPdf, type DecaData } from '../shared/pdf/deca-pdf';
+
+setFontProvider(async () => {
+  const get = async (f: string): Promise<Uint8Array> => new Uint8Array(await (await fetch(`${import.meta.env.BASE_URL}fonts/${f}`)).arrayBuffer());
+  return { regular: await get('DejaVuSans.ttf'), bold: await get('DejaVuSans-Bold.ttf') };
+});
+const demoQrSvg = (url: string): Promise<string> => QRCode.toString(url, { type: 'svg', errorCorrectionLevel: 'M', margin: 4 });
+const DEMO_BANNER = 'DEMOSTRACIÓN · DATOS FICTICIOS · SIN VALOR';
 
 type Row = Record<string, any>;
-interface Stop { party: string | null; address: string; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null; party_id?: string | null; site_id?: string | null; pallets?: number | null; references?: string[]; seals?: string[] }
+interface Stop { party: string | null; address: string; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null; party_id?: string | null; site_id?: string | null; pallets?: number | null; references?: string[]; seals?: string[]; time?: string | null; nif?: string | null }
 
 // ----------------------------------------------------------------------------- utilidades
 let seq = 0;
@@ -27,13 +40,12 @@ const opt = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? 
 const fullAddress = (s: { address?: string | null; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null }): string =>
   [s.address, [s.postal_code, s.city].filter(Boolean).join(' ') + (s.province && s.province !== s.city ? ` (${s.province})` : ''), s.country && !/^españa$/i.test(s.country) ? s.country : '']
     .filter((x) => x && String(x).trim()).join(', ');
-const place = (s: Stop): string => s.city || (s.address.split(',').pop() ?? '').trim() || s.address;
 const palLabel = (n: number): string => `${n} ${n === 1 ? 'palet' : 'palets'}`;
 
 // ----------------------------------------------------------------------------- datos ficticios iniciales
-const company = { name: 'Transportes Ejemplo del Sur S.L.', nif: 'B12345674', address: 'Calle Ficticia 1', postal_code: '18000', city: 'Granada', province: 'Granada', country: 'España' };
+const company: Row = { transport_authorization: '12345678', name: 'Transportes Ejemplo del Sur S.L.', nif: 'B12345674', address: 'Calle Ficticia 1', postal_code: '18000', city: 'Granada', province: 'Granada', country: 'España' };
 const PUBLIC = `${window.location.origin}/demo/`;
-const settings = { doc_template: 'CARTA_DE_PORTE', deca_show_driver: true, food_transport: true, expiry_warn_days: 30, test_mode: false, dev_endpoints: false };
+const settings = { doc_template: 'DECARGO', deca_show_driver: true, food_transport: true, expiry_warn_days: 30, test_mode: false, dev_endpoints: false };
 
 const users: Row[] = [
   { id: uid(), username: 'ana.demo', full_name: 'Ana Gestora Demo', role: 'admin', active: true, pending_activation: false, totp_enabled: true, created_at: ts(-200) },
@@ -85,10 +97,13 @@ const assets: Row[] = [
 ];
 const stop = (p: Row, extra: Partial<Stop> = {}): Stop => ({ party: p.name, address: p.sites[0].address, postal_code: p.postal_code, city: p.city, province: p.province, country: 'España', party_id: p.id, site_id: p.sites[0].id, references: [], seals: [], pallets: null, ...extra });
 const transports: Row[] = [];
+let refSeq = 0;
+const nextRef = (): string => `DEC-${new Date().getFullYear()}-${String(++refSeq).padStart(6, '0')}`;
 function seedTransport(o: Row): Row {
   const t: Row = { id: uid(), created_at: ts(o.dayOffset - 2), category: 'PUBLICO', shipper: { name: company.name, nif: company.nif, address: fullAddress(company) }, carrier: { name: company.name, nif: company.nif },
     carrier_address: fullAddress(company), weight_kg: null, alt_magnitude: null, aec_ref: null, remarks: null, price_eur: null, packages: null, load_reference: null, temperature: null,
-    driver_id: null, relay_id: null, history: [], tractor_id: null, trailer_id: null, deca: null, vehicle_changes: [], ...o };
+    driver_id: null, relay_id: null, history: [], tractor_id: null, trailer_id: null, deca: null, vehicle_changes: [], reference: nextRef(), carrier_authorization: null,
+    units: null, packaging: null, adr: false, adr_detail: null, ...o };
   t.transport_date = iso(o.dayOffset);
   if (t.driver_id) t.history = [{ driver_id: t.driver_id, valid_from: ts(o.dayOffset - 1), valid_to: null }];
   transports.push(t);
@@ -96,7 +111,8 @@ function seedTransport(o: Row): Row {
 }
 function issue(t: Row): void {
   const now = new Date().toISOString();
-  t.deca = { id: uid(), version: 1, status: 'ACTIVE', created_at: now, modified_at: now, public_url: `${PUBLIC}d/${fake(24)}`, versions: [{ version_no: 1, method: 'ORIGINAL', created_at: now, sha256: fake(64), size_bytes: 30000 + Math.floor(Math.random() * 5000) }] };
+  // Como en la aplicación real: el DeCA guarda el modelo y los vehículos con los que se emitió (los cambios van en la 8.1).
+  t.deca = { id: uid(), version: 1, status: 'ACTIVE', created_at: now, modified_at: now, public_url: `${PUBLIC}d/${fake(24)}`, template: settings.doc_template, tractor_id: t.tractor_id, trailer_id: t.trailer_id, versions: [{ version_no: 1, method: 'ORIGINAL', created_at: now, sha256: fake(64), size_bytes: 30000 + Math.floor(Math.random() * 5000) }] };
 }
 function newVersion(t: Row, reason: string): void {
   if (!t.deca) return;
@@ -106,7 +122,7 @@ function newVersion(t: Row, reason: string): void {
 }
 {
   const [norte, frutas, distrib, super_] = parties;
-  issue(seedTransport({ dayOffset: 0, status: 'EN_CURSO', driver_id: JUAN.id, tractor_id: T1.id, trailer_id: S1.id, origins: [stop(norte, { pallets: 26, references: ['PED-0001'] })], destinations: [stop(distrib, { pallets: 26 })], cargo: 'Conservas vegetales (datos ficticios)', weight_kg: '18500', packages: '26 palets' }));
+  issue(seedTransport({ dayOffset: 0, status: 'EN_CURSO', driver_id: JUAN.id, tractor_id: T1.id, trailer_id: S1.id, origins: [stop(norte, { pallets: 26, references: ['PED-0001'], time: '08:00' })], destinations: [stop(distrib, { pallets: 26, time: '15:30' })], cargo: 'Conservas vegetales (datos ficticios)', weight_kg: '18500', packages: '26 Europalet', units: 26, packaging: 'Europalet' }));
   const t2 = seedTransport({ dayOffset: 0, status: 'EN_CURSO', driver_id: MARIA.id, tractor_id: T2.id, trailer_id: S2.id, origins: [stop(frutas, { pallets: 20 })], destinations: [stop(super_, { pallets: 20, seals: ['PR-778899'] })], cargo: 'Fruta fresca', weight_kg: '16000', packages: '20 palets', temperature: '+2 a +6' });
   issue(t2); t2.vehicle_changes.push({ at: ts(0, 7), tractor: '5678 DMO', trailer: 'R-2222-DMO' }); newVersion(t2, 'Cambio de vehículo');
   issue(seedTransport({ dayOffset: 1, status: 'PENDIENTE', origins: [stop(norte)], destinations: [stop(super_)], cargo: 'Material de oficina', weight_kg: '4200', tractor_id: T1.id, trailer_id: S1.id }));
@@ -126,7 +142,7 @@ const resolve = (l: Stop[]): Row[] => l.map((s) => { const x = siteOf(s); return
 
 function listRow(t: Row): Row {
   const d = userById(t.driver_id);
-  return { id: t.id, status: t.status, transport_date: t.transport_date, shipper_name: t.shipper.name, origin: stopsText(t.origins).replace(/\n/g, ' · '), destination: stopsText(t.destinations).replace(/\n/g, ' · '),
+  return { id: t.id, reference: t.reference, status: t.status, transport_date: t.transport_date, shipper_name: t.shipper.name, origin: stopsText(t.origins).replace(/\n/g, ' · '), destination: stopsText(t.destinations).replace(/\n/g, ' · '),
     cargo: t.cargo, deca_id: t.deca?.id ?? null, driver_user_id: t.driver_id, driver_name: d?.full_name ?? null, tractor: vehById(t.tractor_id)?.plate ?? null, trailer: vehById(t.trailer_id)?.plate ?? null };
 }
 function detail(t: Row): Row {
@@ -136,6 +152,7 @@ function detail(t: Row): Row {
     origin: stopsText(t.origins), destination: stopsText(t.destinations), origins: resolve(t.origins), destinations: resolve(t.destinations),
     cargo: t.cargo, weight_kg: t.weight_kg, alt_magnitude: t.alt_magnitude, aec_ref: t.aec_ref, remarks: t.remarks, price_eur: t.price_eur, packages: t.packages,
     load_reference: t.load_reference, temperature: t.temperature, carrier_address: t.carrier_address,
+    reference: t.reference, carrier_authorization: t.carrier_authorization, units: t.units, packaging: t.packaging, adr: t.adr === true, adr_detail: t.adr_detail,
     driver: d ? { id: d.id, username: d.username, full_name: d.full_name } : null,
     vehicles: tr ? { tractor: { id: tr.id, plate: tr.plate, kind: tr.kind }, trailer: tl ? { id: tl.id, plate: tl.plate, kind: tl.kind } : null } : null,
     deca: t.deca ? { id: t.deca.id, version: t.deca.version, status: 'ACTIVE', created_at: t.deca.created_at, modified_at: t.deca.modified_at, public_active: true, public_until: null, retain_not_before: null,
@@ -148,24 +165,36 @@ const OPEN = ['PENDIENTE', 'EN_CURSO'];
 const transportBy = (id: string): Row => { const t = transports.find((x) => x.id === id); if (!t) throw notFound(); return t; };
 const openOr409 = (t: Row): void => { if (!OPEN.includes(t.status)) throw new DemoError(409, 'transporte_cerrado'); };
 function driverShape(t: Row): Row {
-  return { id: t.id, status: t.status, transport_date: t.transport_date, shipper: t.shipper.name, origin: stopsText(t.origins), destination: stopsText(t.destinations), cargo: t.cargo, weight_kg: t.weight_kg,
+  return { id: t.id, reference: t.reference, status: t.status, transport_date: t.transport_date, shipper: t.shipper.name, origin: stopsText(t.origins), destination: stopsText(t.destinations), cargo: t.cargo, weight_kg: t.weight_kg,
     alt_magnitude: t.alt_magnitude, vehicles: t.tractor_id ? { tractor: vehById(t.tractor_id)?.plate, trailer: vehById(t.trailer_id)?.plate ?? null } : null,
     relay: userById(t.relay_id)?.full_name ?? null, deca: t.deca ? { id: t.deca.id, version: t.deca.version, created_at: t.deca.created_at } : null,
-    origins: resolve(t.origins).map((s) => ({ party: s.party, address: fullAddress(s), label: s.label, maps_url: s.maps_url, notes: s.site_notes, pallets: s.pallets ?? null, references: s.references ?? [], seals: s.seals ?? [] })),
-    destinations: resolve(t.destinations).map((s) => ({ party: s.party, address: fullAddress(s), label: s.label, maps_url: s.maps_url, notes: s.site_notes, pallets: s.pallets ?? null, references: s.references ?? [], seals: s.seals ?? [] })) };
+    origins: resolve(t.origins).map((s) => ({ party: s.party, address: fullAddress(s), label: s.label, maps_url: s.maps_url, notes: s.site_notes, time: s.time ?? null, pallets: s.pallets ?? null, references: s.references ?? [], seals: s.seals ?? [] })),
+    destinations: resolve(t.destinations).map((s) => ({ party: s.party, address: fullAddress(s), label: s.label, maps_url: s.maps_url, notes: s.site_notes, time: s.time ?? null, pallets: s.pallets ?? null, references: s.references ?? [], seals: s.seals ?? [] })) };
 }
-const dateEs = (s: string): string => new Date(s).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-async function pdfOf(t: Row): Promise<Blob> {
-  const dr = userById(t.driver_id);
-  const bytes = await demoDecaPdf({
-    version: t.deca.version, createdAt: dateEs(t.deca.created_at), modifiedAt: dateEs(t.deca.modified_at), url: t.deca.public_url, date: t.transport_date.split('-').reverse().join('/'),
-    shipper: t.shipper, carrier: { ...t.carrier, address: t.carrier_address ?? '' },
-    origins: t.origins.map(place), destinations: t.destinations.map(place), consignees: t.destinations.map((s: Stop) => [s.party, fullAddress(s)].filter(Boolean).join(' — ')),
-    cargo: t.cargo, weight: t.weight_kg ? `${Number(t.weight_kg).toLocaleString('es-ES')} kg` : (t.alt_magnitude ?? ''), packages: t.packages ?? '',
-    tractor: vehById(t.tractor_id)?.plate ?? '', trailer: vehById(t.trailer_id)?.plate ?? '', driver: settings.deca_show_driver && dr ? dr.full_name : '',
-    remarks: [t.temperature ? `Temperatura de transporte: ${t.temperature} ºC` : '', t.remarks ?? ''].filter(Boolean).join('\n'),
-    changes: t.vehicle_changes.map((c: Row) => `${dateEs(c.at)} · ${c.tractor}${c.trailer ? ` / ${c.trailer}` : ''}`)
-  });
+/** El DeCA de la demo: mismos datos y mismo generador que la aplicación real, con el rótulo de demostración. */
+async function pdfOf(t: Row, opts: { template?: string; banner?: string } = {}): Promise<Blob> {
+  const tpl = opts.template ?? t.deca?.template ?? settings.doc_template;
+  const tr = vehById(t.deca?.tractor_id ?? t.tractor_id), tl = vehById(t.deca?.trailer_id ?? t.trailer_id);
+  if (!tr) throw new DemoError(409, 'vehicle_required');
+  const ids: string[] = Array.from(new Set(t.history.map((h: Row) => h.driver_id as string)));
+  const person = (id: string | undefined): DecaData['driver'] => { const u = userById(id); const p = (id && profiles[id]) || {}; return u ? { name: u.full_name, nif: p.nif ?? null, phone: p.phone ?? null } : null; };
+  const withDriver = settings.deca_show_driver && tpl !== 'ESTANDAR';
+  const data: DecaData = {
+    ...buildDecaData({
+      shipper_name: t.shipper.name, shipper_nif: t.shipper.nif, shipper_address: t.shipper.address, carrier_name: t.carrier.name, carrier_nif: t.carrier.nif,
+      origin: { text: stopsText(t.origins), stops: t.origins }, destination: { text: stopsText(t.destinations), stops: t.destinations },
+      cargo_description: t.cargo, weight_kg: t.weight_kg, alt_magnitude: t.alt_magnitude ? { text: t.alt_magnitude } : null, aec_ref: t.aec_ref, transport_date: t.transport_date, remarks: t.remarks,
+      price_eur: t.price_eur, carrier_address: t.carrier_address, packages: t.packages, load_reference: t.load_reference, temperature: t.temperature,
+      reference: t.reference, carrier_authorization: t.carrier_authorization, units: t.units, packaging: t.packaging, adr: t.adr, adr_detail: t.adr_detail
+    }, { tractor: { plate: tr.plate, kind: tr.kind }, trailer: tl ? { plate: tl.plate, kind: tl.kind } : null },
+    { companyAddress: fullAddress(company), companyAuthorization: company.transport_authorization ?? null, driver: withDriver ? person(ids[0]) : null }),
+    driver2: withDriver && ids.length > 1 ? person(ids[ids.length - 1]) : null,
+    vehicleChanges: t.vehicle_changes.map((c: Row) => ({ at: c.at, tractorPlate: c.tractor, trailerPlate: c.trailer ?? null })),
+    template: tpl as DecaData['template'], isTest: false
+  };
+  const gen = tpl === 'CARTA_DE_PORTE' ? generateCartaPdf : tpl === 'DECARGO' ? generateFichasPdf : generateDecaPdf;
+  const d = t.deca ?? { id: '00000000-0000-4000-8000-000000000000', version: 1, created_at: new Date().toISOString(), modified_at: new Date().toISOString(), public_url: PUBLIC };
+  const bytes = await gen({ decaId: d.id, versionNo: d.version, data, url: d.public_url, createdAt: new Date(d.created_at), modifiedAt: new Date(d.modified_at), isTest: false, banner: opts.banner ?? DEMO_BANNER });
   return new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' });
 }
 
@@ -197,7 +226,10 @@ const maskV = (v: string): string => '•'.repeat(Math.max(v.length - 4, 3)) + v
 function config(): Row {
   return { public_base_url: window.location.origin, source: 'web', env_public_base_url: null, error: null, https: true, insecure_allowed: false,
     test_mode: settings.test_mode, test_mode_source: 'web', dev_endpoints: false, dev_endpoints_available: false, doc_template: settings.doc_template,
-    doc_templates: [{ code: 'ESTANDAR', label: 'Modelo DECARGO', description: 'Una sección por apartado del artículo 6 de la Orden (a a h).' }, { code: 'CARTA_DE_PORTE', label: 'Carta de porte (casillas numeradas)', description: 'El formulario clásico con casillas numeradas 1 a 15.' }],
+    doc_templates: [
+      { code: 'DECARGO', label: 'Modelo DECARGO (recomendado)', description: 'En fichas y en una sola página: cabecera con QR, intervinientes, carga y entrega con hora, vehículo y conductor, mercancía (unidades, embalaje, ADR) y observaciones.' },
+      { code: 'ESTANDAR', label: 'Modelo por apartados', description: 'Una sección por apartado del artículo 6 de la Orden (a a h), en texto corrido.' },
+      { code: 'CARTA_DE_PORTE', label: 'Carta de porte (casillas numeradas)', description: 'El formulario clásico con casillas numeradas 1 a 15, como el documento de control en papel.' }],
     deca_show_driver: settings.deca_show_driver, food_transport: settings.food_transport, expiry_warn_days: settings.expiry_warn_days, company: { ...company },
     push_configured: true, fcm: { configured: false, project_id: null, package: 'es.decargo.app', updated_at: null, updated_by: null }, decas_total: transports.filter((t) => t.deca).length, decas_other_base: 0 };
 }
@@ -276,7 +308,9 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
       return v.map((s: Row) => {
         const st: Stop = { party: opt(s.party), address: req(s.address, field, 3), postal_code: opt(s.postal_code), city: opt(s.city), province: opt(s.province), country: opt(s.country),
           party_id: opt(s.party_id), site_id: opt(s.site_id), pallets: s.pallets === undefined || s.pallets === '' ? null : Number(s.pallets),
-          references: typeof s.references === 'string' ? s.references.split(',').map((y: string) => y.trim()).filter(Boolean) : [], seals: typeof s.seals === 'string' ? s.seals.split(',').map((y: string) => y.trim()).filter(Boolean) : [] };
+          references: typeof s.references === 'string' ? s.references.split(',').map((y: string) => y.trim()).filter(Boolean) : [], seals: typeof s.seals === 'string' ? s.seals.split(',').map((y: string) => y.trim()).filter(Boolean) : [],
+          time: opt(s.time) };
+        if (st.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(st.time)) throw bad('time');
         if (!st.city && !/,\s*[^\d,]{2,}$/.test(st.address)) throw new DemoError(400, 'localidad_requerida', { field });
         return st;
       });
@@ -287,7 +321,12 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
     const generate = b.generate_deca !== false;
     if (generate && !b.tractor_id) throw bad('tractor_id');
     const loaded = origins.reduce((a, s) => a + (s.pallets ?? 0), 0);
-    let packages = opt(b.packages); if (packages && /^\d+$/.test(packages)) packages = palLabel(Number(packages)); if (!packages && loaded) packages = palLabel(loaded);
+    const units = b.units === undefined || b.units === null || b.units === '' ? null : Number(b.units);
+    if (units !== null && (!Number.isInteger(units) || units < 0 || units > 999999)) throw bad('units');
+    const packaging = opt(b.packaging), adr = b.adr === true, carrierAuth = opt(b.carrier_authorization);
+    let packages = opt(b.packages); if (packages && /^\d+$/.test(packages)) packages = palLabel(Number(packages));
+    if (!packages && units !== null) packages = `${units} ${packaging ?? (units === 1 ? 'bulto' : 'bultos')}`;
+    if (!packages && loaded) packages = palLabel(loaded);
     const other = !!opt(b.carrier_name);
     const t: Row = { id: uid(), created_at: new Date().toISOString(), transport_date: date, category: 'PUBLICO', status: b.driver_id ? 'EN_CURSO' : 'PENDIENTE',
       shipper: { name: req(b.shipper_name, 'shipper_name', 2), nif: req(b.shipper_nif, 'shipper_nif', 5), address: fullAddress({ address: opt(b.shipper_address), postal_code: opt(b.shipper_postal_code), city: opt(b.shipper_city), province: opt(b.shipper_province), country: opt(b.shipper_country) }) },
@@ -295,12 +334,13 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
       carrier_address: other ? fullAddress({ address: opt(b.carrier_address), postal_code: opt(b.carrier_postal_code), city: opt(b.carrier_city), province: opt(b.carrier_province), country: opt(b.carrier_country) }) : fullAddress(company),
       origins, destinations, cargo, weight_kg: opt(b.weight_kg), alt_magnitude: opt(b.alt_magnitude), aec_ref: opt(b.aec_ref), remarks: opt(b.remarks), price_eur: opt(b.price_eur), packages,
       load_reference: opt(b.load_reference), temperature: opt(b.temperature), driver_id: opt(b.driver_id), relay_id: null, history: b.driver_id ? [{ driver_id: b.driver_id, valid_from: new Date().toISOString(), valid_to: null }] : [],
-      tractor_id: opt(b.tractor_id), trailer_id: opt(b.trailer_id), deca: null, vehicle_changes: [] };
+      tractor_id: opt(b.tractor_id), trailer_id: opt(b.trailer_id), deca: null, vehicle_changes: [],
+      reference: nextRef(), carrier_authorization: other ? carrierAuth : null, units, packaging, adr, adr_detail: adr ? opt(b.adr_detail) : null };
     if (generate) issue(t);
     transports.push(t);
     // La agenda aprende las empresas nuevas (como en la aplicación real)
     for (const s of [...origins, ...destinations]) if (s.party && !s.party_id && !parties.some((p) => p.name.toLowerCase() === s.party!.toLowerCase())) parties.push(party(s.party, null, s.address, s.postal_code ?? '', s.city ?? '', [{ address: s.address, kind: 'AMBOS' }]));
-    return ok({ id: t.id, deca_id: t.deca?.id ?? null, registered: { parties: 0, sites: 0 } }, 201);
+    return ok({ id: t.id, reference: t.reference, deca_id: t.deca?.id ?? null, registered: { parties: 0, sites: 0 } }, 201);
   }
   if ((x = m(/^\/transports\/([^/]+)$/)) && method === 'GET') return ok(detail(transportBy(x[1])));
   if ((x = m(/^\/transports\/([^/]+)\/deca$/)) && method === 'POST') {
@@ -434,11 +474,11 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
   if (method === 'POST' && path === '/parties') {
     officeOnly(); const name = req(b.name, 'name', 2);
     const p = party(name, opt(b.nif)?.toUpperCase() ?? null, opt(b.address) ?? '', opt(b.postal_code) ?? '', opt(b.city) ?? '', []);
-    p.province = opt(b.province); p.country = opt(b.country) ?? 'España'; p.notes = opt(b.notes); p.use_count = 0; parties.push(p); return ok(partyRow(p), 201);
+    p.province = opt(b.province); p.country = opt(b.country) ?? 'España'; p.notes = opt(b.notes); p.transport_authorization = opt(b.transport_authorization); p.use_count = 0; parties.push(p); return ok(partyRow(p), 201);
   }
   if ((x = m(/^\/parties\/([^/]+)$/))) {
     const p = parties.find((y) => y.id === x![1]); if (!p) throw notFound();
-    if (method === 'PATCH') { officeOnly(); for (const k of ['name', 'nif', 'address', 'postal_code', 'city', 'province', 'country', 'notes']) if (k in b) p[k] = opt(b[k]); if (typeof b.active === 'boolean') p.active = b.active; return ok(partyRow(p)); }
+    if (method === 'PATCH') { officeOnly(); for (const k of ['name', 'nif', 'transport_authorization', 'address', 'postal_code', 'city', 'province', 'country', 'notes']) if (k in b) p[k] = opt(b[k]); if (typeof b.active === 'boolean') p.active = b.active; return ok(partyRow(p)); }
     return ok({ ...partyRow(p), sites: p.sites.filter((s: Row) => q.get('all') === '1' || s.active).map(siteRow) });
   }
   if ((x = m(/^\/parties\/([^/]+)\/sites$/)) && method === 'POST') {
@@ -457,13 +497,13 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
   if (path.startsWith('/admin/config')) {
     adminOnly();
     if (method === 'GET' && path === '/admin/config') return ok(config());
-    if (path === '/admin/config/company') { Object.assign(company, { name: req(b.name, 'name', 2), nif: req(b.nif, 'nif', 5), address: req(b.address, 'address', 3), postal_code: opt(b.postal_code), city: opt(b.city), province: opt(b.province), country: opt(b.country) }); return ok(config()); }
+    if (path === '/admin/config/company') { Object.assign(company, { transport_authorization: opt(b.transport_authorization), name: req(b.name, 'name', 2), nif: req(b.nif, 'nif', 5), address: req(b.address, 'address', 3), postal_code: opt(b.postal_code), city: opt(b.city), province: opt(b.province), country: opt(b.country) }); return ok(config()); }
     if (path === '/admin/config/template') { if (b.template) settings.doc_template = b.template; if (typeof b.show_driver === 'boolean') settings.deca_show_driver = b.show_driver; return ok(config()); }
     if (path === '/admin/config/documents') { if (typeof b.food_transport === 'boolean') settings.food_transport = b.food_transport; if (b.warn_days) settings.expiry_warn_days = Number(b.warn_days); return ok(config()); }
     if (path === '/admin/config/flags') { if (typeof b.test_mode === 'boolean') settings.test_mode = b.test_mode; return ok(config()); }
     if (path.startsWith('/admin/config/template-preview')) {
       const t = transports.find((y) => y.deca) ?? transports[0];
-      return { status: 200, blob: await pdfOf(t.deca ? t : { ...t, deca: { version: 1, created_at: new Date().toISOString(), modified_at: new Date().toISOString(), public_url: PUBLIC } }) };
+      return { status: 200, blob: await pdfOf(t, { template: q.get('template') ?? settings.doc_template, banner: 'MODELO DE EJEMPLO · DATOS FICTICIOS · SIN VALOR' }) };
     }
     NOT_IN_DEMO();
   }

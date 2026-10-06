@@ -168,7 +168,8 @@ export function registerIdentityRoutes(app: FastifyInstance, pool: Pool, storage
     const p = process.env.DECARGO_APP_PATH ?? '', demo = process.env.DECARGO_DEMO_URL ?? '';
     reply.header('cache-control', 'no-store');
     // Demo: por defecto la incluida en esta instalación (/demo/, datos ficticios en el navegador); «off» la oculta; o una dirección https propia.
-    const demoUrl = demo === '' ? '/demo/' : demo === 'off' ? null : /^https:\/\/[^\s"'<>]+$/.test(demo) ? demo : null;
+    const site = process.env.DECARGO_PUBLIC_SITE === '1';   // sin web pública (instalación de empresa) no hay demo incluida
+    const demoUrl = demo === 'off' ? null : /^https:\/\/[^\s"'<>]+$/.test(demo) ? demo : demo === '' && site ? '/demo/' : null;
     return { app_path: /^[A-Za-z0-9_-]{16,64}$/.test(p) ? `/${p}/` : '/', demo_url: demoUrl };
   });
   app.get('/api/v1/app/fcm-config', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (_req, reply) => {

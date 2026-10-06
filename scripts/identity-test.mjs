@@ -756,8 +756,14 @@ async function run() {
   // Grupo B: la raíz es la web pública y la aplicación vive en /<DECARGO_APP_PATH>/ (configurable, estable).
   const APPP = ENV.DECARGO_APP_PATH;
   check(/^[A-Za-z0-9_-]{16,64}$/.test(APPP || '') && !/^(app|admin|panel|login|decargo|dashboard|gestion|office)$/i.test(APPP), 'la ruta interna de la aplicación está configurada en .env y no es una palabra obvia');
-  const rootHtml = await (await fetch(WEB + '/')).text();
-  check(/Probar DECARGO/.test(rootHtml) && /App para conductores/.test(rootHtml) && !rootHtml.includes('/src/main.ts') && !/assets\/index-/.test(rootHtml) && !rootHtml.includes(APPP), '«/» es la web pública (no la aplicación) y no lleva escrita la ruta interna');
+  const SITE = ENV.DECARGO_PUBLIC_SITE === '1';   // web pública del proyecto (presentación + demo); en una instalación de empresa, desactivada
+  if (SITE) {
+    const rootHtml = await (await fetch(WEB + '/')).text();
+    check(/Probar DECARGO/.test(rootHtml) && /App para conductores/.test(rootHtml) && !rootHtml.includes('/src/main.ts') && !/assets\/index-/.test(rootHtml) && !rootHtml.includes(APPP), '«/» es la web pública (no la aplicación) y no lleva escrita la ruta interna');
+  } else {
+    const r0 = await fetch(WEB + '/', { redirect: 'manual' });
+    check(r0.status === 302 && r0.headers.get('location') === `/${APPP}/` && (await fetch(WEB + '/demo/')).status === 404 && (await fetch(WEB + '/web/index.html')).status === 404, 'instalación de empresa: sin web pública ni demo; «/» lleva directamente a la aplicación');
+  }
   const appHtml = await fetch(WEB + `/${APPP}/`), appSub = await fetch(WEB + `/${APPP}/conductor/lo-que-sea`);
   check(appHtml.status === 200 && /assets\/index-/.test(await appHtml.text()) && appSub.status === 200 && (await fetch(WEB + `/${APPP}`, { redirect: 'manual' })).status === 301, 'la aplicación responde en su ruta (y en sus subrutas, para recargar la página)');
   const legacy = await fetch(WEB + '/conductor?t=abc', { redirect: 'manual' });
@@ -765,9 +771,11 @@ async function run() {
   check((await fetch(WEB + '/assets/no-existe.js')).status === 404 && (await fetch(WEB + '/no-existe')).status === 404 && (await fetch(WEB + '/index.html')).status === 404 && (await fetch(WEB + '/app')).status === 404 && (await fetch(WEB + '/admin')).status === 404, 'lo que no existe da 404 (también /index.html, /app y /admin: la aplicación no está en rutas obvias)');
   const appHtml2 = async () => (await fetch(WEB + `/${APPP}/`)).text();
   const ent = await (await fetch(WEB + '/api/v1/app/entry')).json();
-  check(ent.app_path === `/${APPP}/` && ent.demo_url === '/demo/', 'la API pública da la ruta de la aplicación (botón «Acceder» y app Android) y la demo incluida');
-  const demoP = await fetch(WEB + '/demo/'), demoH = await demoP.text();
-  check(demoP.status === 200 && /DECARGO · Demostración/.test(demoH) && !/rel="manifest"/.test(demoH) && (await fetch(WEB + '/demo/transportes')).status === 200 && /noindex/.test(demoP.headers.get('x-robots-tag') || ''), 'la demo se sirve en /demo/ (sin manifiesto instalable, sin indexar) y admite recargar en cualquier pantalla');
+  check(ent.app_path === `/${APPP}/` && ent.demo_url === (SITE ? '/demo/' : null), 'la API pública da la ruta de la aplicación (app Android y botón «Acceder») y la demo solo si hay web pública');
+  if (SITE) {
+    const demoP = await fetch(WEB + '/demo/'), demoH = await demoP.text();
+    check(demoP.status === 200 && /DECARGO · Demostración/.test(demoH) && !/rel="manifest"/.test(demoH) && (await fetch(WEB + '/demo/transportes')).status === 200 && /noindex/.test(demoP.headers.get('x-robots-tag') || ''), 'la demo se sirve en /demo/ (sin manifiesto instalable, sin indexar) y admite recargar en cualquier pantalla');
+  }
   const mainJs = (await appHtml2()).match(/\/assets\/index-[^"]+\.js/)?.[0];
   check(!!mainJs && !(await (await fetch(WEB + mainJs)).text()).includes('Transportes Ejemplo del Sur'), 'el código de la demo no va dentro de la aplicación real');
   const mf = await fetch(WEB + '/manifest.webmanifest'), mfj = await mf.json();

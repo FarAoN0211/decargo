@@ -1,9 +1,8 @@
-import { promises as fs } from 'node:fs';
-import * as path from 'node:path';
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, PDFFont, PDFPage, rgb } from 'pdf-lib';
 import QRCode from 'qrcode';
-import { ASSETS, DecaPdfInput, esDate, temperatureLine, wrap } from './deca-pdf';
+import { fontBytes } from './fonts';
+import { DecaPdfInput, esDate, temperatureLine, wrap } from './deca-pdf';
 
 /**
  * «Modelo DECARGO»: DeCA en fichas (cabecera con QR, intervinientes, carga y entrega, vehículo y conductor, mercancía y observaciones).
@@ -23,11 +22,12 @@ const pal = (n: number): string => `${n} ${n === 1 ? 'palet' : 'palets'}`;
 type Field = [label: string, value: string];
 interface Fonts { regular: PDFFont; bold: PDFFont }
 
-export async function generateFichasPdf(i: DecaPdfInput): Promise<Buffer> {
+export async function generateFichasPdf(i: DecaPdfInput): Promise<Uint8Array> {
   const doc = await PDFDocument.create({ updateMetadata: false });
   doc.registerFontkit(fontkit);
-  const regular = await doc.embedFont(await fs.readFile(path.join(ASSETS, 'DejaVuSans.ttf')), { subset: true });
-  const bold = await doc.embedFont(await fs.readFile(path.join(ASSETS, 'DejaVuSans-Bold.ttf')), { subset: true });
+  const fb = await fontBytes();
+  const regular = await doc.embedFont(fb.regular, { subset: true });
+  const bold = await doc.embedFont(fb.bold, { subset: true });
   const F: Fonts = { regular, bold };
   doc.setTitle(i.blank ? 'DeCA (formulario en blanco)' : `DeCA ${i.data.reference ?? i.decaId} v${i.versionNo}`);
   doc.setSubject('Documento de Control Administrativo (Orden FOM/2861/2012)');
@@ -128,7 +128,7 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Buffer> {
       const qrCell = qrCellFor(c.s), leftW = W - qrCell - GAP;
       const head: Field[][] = [
         [['Referencia', d.reference ?? ''], ['Creado', i.blank ? '' : when(i.createdAt.toISOString())]],
-        [['f) Fecha de realización del transporte', date], ['Versión', i.blank ? '' : String(i.versionNo)]],
+        [['f) Fecha de realización', date], ['Versión', i.blank ? '' : String(i.versionNo)]],
         [['Última modificación', i.blank ? '' : when(i.modifiedAt.toISOString())]]
       ];
       const urlF: Field[] = i.blank ? [] : [['Documento en línea (también en el QR)', i.url]];
@@ -225,5 +225,5 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Buffer> {
     const t = `Documento emitido con DECARGO${ref} · Versión ${i.blank ? '—' : i.versionNo} · Página ${k + 1} de ${pages.length}`;
     p.drawText(t, { x: (PW - F.regular.widthOfTextAtSize(t, 6.5)) / 2, y: M - 8, size: 6.5, font: F.regular, color: MUTED });
   });
-  return Buffer.from(await doc.save({ useObjectStreams: false }));
+  return doc.save({ useObjectStreams: false });
 }

@@ -78,11 +78,11 @@ Después:
 2. `./deca config show` muestra la IP, los puertos y la ruta de la aplicación.
 
 Con el dominio puesto:
-- `https://tu-dominio/` muestra la **web pública**: presentación, descarga de la app Android y demostración.
-- La aplicación vive en `https://tu-dominio/<ruta>/`. Esa ruta la crea el instalador y está en `.env` (`DECARGO_APP_PATH`). El botón **Acceder** de la web pública lleva a ella. Para cambiarla: `./deca config set-app-path nueva` y `./deca up`.
+- `https://tu-dominio/` lleva directamente a la aplicación, que vive en `https://tu-dominio/<ruta>/`. Esa ruta la crea el instalador y está en `.env` (`DECARGO_APP_PATH`); la app Android la encuentra sola.
+- Una instalación de empresa **solo instala la aplicación**: no publica la web de presentación ni la demostración del proyecto (`DECARGO_PUBLIC_SITE=0`, el valor por defecto). Para cambiarla: `./deca config set-app-path nueva` y `./deca up`.
 
 ## Primer acceso
-1. Abre la aplicación (botón **Acceder** de la web pública) → **Activar cuenta**.
+1. Abre `https://tu-dominio/` (o la dirección que mostró el instalador) → **Activar cuenta**.
 2. Escribe el usuario del administrador y el **código de activación** que mostró el instalador, y elige una contraseña.
 3. Configura la **verificación en dos pasos** con una aplicación autenticadora (Google Authenticator, Aegis…). Es obligatoria para la oficina.
 4. Si perdiste el código: `./deca create-user` crea otro usuario. Un administrador también puede generar un código nuevo desde Conductores.

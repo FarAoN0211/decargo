@@ -1,8 +1,7 @@
-import { promises as fs } from 'node:fs';
-import * as path from 'node:path';
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, PDFFont, PDFPage, rgb } from 'pdf-lib';
 import QRCode from 'qrcode';
+import { fontBytes } from './fonts';
 
 /** Datos del art. 6 de la Orden FOM/2861/2012 (letras a–h) en el momento de generar el PDF. */
 export interface DecaData {
@@ -55,7 +54,6 @@ export interface DecaPdfInput {
   isTest: boolean;
 }
 
-export const ASSETS = path.join(__dirname, '..', '..', 'assets', 'fonts');
 export const INK = rgb(0.07, 0.24, 0.31);
 export const GREY = rgb(0.35, 0.35, 0.35);
 
@@ -89,11 +87,12 @@ export function esDate(iso: string): string {
  * Genera el PDF de forma programática y nativa: texto real con fuente embebida (subconjunto)
  * y QR dibujado como vectores. Sin imágenes, sin capturas, sin escaneos (RES segundo.2).
  */
-export async function generateDecaPdf(i: DecaPdfInput): Promise<Buffer> {
+export async function generateDecaPdf(i: DecaPdfInput): Promise<Uint8Array> {
   const doc = await PDFDocument.create({ updateMetadata: false });
   doc.registerFontkit(fontkit);
-  const regular = await doc.embedFont(await fs.readFile(path.join(ASSETS, 'DejaVuSans.ttf')), { subset: true });
-  const bold = await doc.embedFont(await fs.readFile(path.join(ASSETS, 'DejaVuSans-Bold.ttf')), { subset: true });
+  const fb = await fontBytes();
+  const regular = await doc.embedFont(fb.regular, { subset: true });
+  const bold = await doc.embedFont(fb.bold, { subset: true });
 
   doc.setTitle(`DeCA ${i.decaId} v${i.versionNo}`);
   doc.setSubject('Documento de Control Administrativo (Orden FOM/2861/2012)');
@@ -177,5 +176,5 @@ export async function generateDecaPdf(i: DecaPdfInput): Promise<Buffer> {
   page.drawText('Documento en línea (escanee el QR):', { x: M, y: iy, size: 7.5, font: regular, color: GREY });
   urlLines.forEach((l, k) => page.drawText(l, { x: M, y: iy - 10 - k * 9, size: 7, font: regular }));
 
-  return Buffer.from(await doc.save({ useObjectStreams: false }));
+  return doc.save({ useObjectStreams: false });
 }
