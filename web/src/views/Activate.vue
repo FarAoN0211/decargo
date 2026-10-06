@@ -47,7 +47,7 @@ async function submit(): Promise<void> {
           <label>Usuario<input v-model.trim="username" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label>
           <label>Código de activación<input v-model.trim="code" class="mono" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX" required /></label>
         </template>
-        <input v-else :value="username" autocomplete="username" readonly style="display: none" />
+        <input v-else :value="username" autocomplete="username" readonly class="hidden" />
         <label>Nueva contraseña<span class="hint"> (mínimo 10 caracteres; evita las contraseñas comunes)</span><input v-model="password" type="password" autocomplete="new-password" required /></label>
         <label>Repite la contraseña<input v-model="password2" type="password" autocomplete="new-password" required /></label>
         <label v-if="needTotp">Código de verificación actual<input v-model.trim="totp" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required /></label>

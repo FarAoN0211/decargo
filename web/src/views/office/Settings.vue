@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import FileViewer from '../../components/FileViewer.vue';
 import { api, apiBlob, auth } from '../../api';
 import { messageFor } from '../../errors';
@@ -142,136 +142,193 @@ const steps = [
   { t: 'Vuelve aquí, escribe la dirección pública nueva y pulsa Comprobar y Guardar', c: '', n: 'Los DeCA ya emitidos conservan la dirección que llevan impresa en su QR; los nuevos usarán la nueva.' }
 ];
 onMounted(() => { if (isAdmin.value) void load(); });
+
+// Menú lateral de apartados: lleva al apartado y marca el que se está viendo.
+const GROUPS = [
+  { g: 'Empresa y documentos', items: [{ id: 'empresa', t: 'Datos de la empresa' }, { id: 'documento', t: 'Documento (DeCA)' }, { id: 'caducidades', t: 'Control de caducidades' }] },
+  { g: 'Sistema', items: [{ id: 'direccion', t: 'Dirección pública' }, { id: 'android', t: 'App Android' }, { id: 'pruebas', t: 'Modo de pruebas' }, { id: 'traslado', t: 'Traslado de servidor' }] }
+];
+const active = ref('empresa');
+let spy: IntersectionObserver | undefined;
+function startSpy(): void {
+  spy?.disconnect();
+  spy = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) active.value = e.target.id; }, { rootMargin: '-12% 0px -75% 0px' });
+  for (const g of GROUPS) for (const i of g.items) { const el = document.getElementById(i.id); if (el) spy.observe(el); }
+}
+function go(id: string): void { active.value = id; document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+watch(cfg, async (v) => { if (v) { await nextTick(); startSpy(); } }, { once: true });
+onBeforeUnmount(() => spy?.disconnect());
 </script>
 <template>
   <div class="page-title"><h1>Configuración</h1></div>
   <p v-if="!isAdmin" class="alert alert-warn">Solo el administrador puede ver y cambiar la configuración.</p>
   <template v-else>
     <p v-if="error" class="alert alert-err">{{ error }}</p>
-    <section v-if="cfg" class="card">
-      <h2>Tu empresa · transportista efectivo</h2>
-      <p class="muted">Son los datos del transportista efectivo (apartado b del DeCA) que llevarán por defecto todos los transportes nuevos. En un transporte concreto se puede indicar otro. Los DeCA ya emitidos conservan los suyos.</p>
-      <form class="stack" @submit.prevent="saveCompany">
-        <div class="grid2"><label>Nombre o denominación social<input v-model="co.name" required maxlength="120" /></label><label>NIF<input v-model="co.nif" required maxlength="16" /></label></div>
-        <label>Domicilio (calle y número)<input v-model="co.address" required maxlength="200" /></label>
-        <label>Nº de autorización de transporte<span class="hint small"> (opcional: el de la autorización de transporte público de mercancías / Registro de Empresas y Actividades de Transporte; sale en el Modelo DECARGO)</span><input v-model="co.transport_authorization" maxlength="30" /></label>
-        <div class="grid4"><label>Código postal<input v-model="co.postal_code" maxlength="10" inputmode="numeric" /></label><label>Localidad<input v-model="co.city" maxlength="80" /></label><label>Provincia<input v-model="co.province" maxlength="80" /></label><label>País<input v-model="co.country" maxlength="60" placeholder="España" /></label></div>
-        <div class="row"><button class="btn btn-primary" type="submit">Guardar</button></div>
-      </form>
-      <p v-if="coMsg" class="alert alert-ok">{{ coMsg }}</p>
-    </section>
-
-    <section v-if="cfg" class="card">
-      <h2>Documento (DeCA)</h2>
-      <p class="muted">Los DeCA se emiten con el <b>Modelo DECARGO</b>: en fichas y en una sola página, con cabecera con QR, intervinientes, carga y entrega con hora, vehículo y conductor, mercancía y observaciones.</p>
-      <span class="row"><button class="btn btn-sm" type="button" @click="showTpl('ejemplo', 'Ejemplo · Modelo DECARGO')">Ver ejemplo</button>
-        <button class="btn btn-sm" type="button" @click="showTpl('blanco', 'En blanco · Modelo DECARGO')">Formulario en blanco</button></span>
-
-      <h3>Logo de la empresa</h3>
-      <p class="muted small">Sale en la cabecera del DeCA, a la izquierda (el QR va a la derecha). PNG, JPEG, WebP o SVG; mejor con fondo transparente o blanco. Solo cambia los DeCA que se emitan a partir de ahora: los ya emitidos, y sus versiones, conservan el logo con el que se emitieron.</p>
-      <div class="logo-row">
-        <div class="logo-box"><img v-if="logoUrl" :src="logoUrl" alt="Logo de la empresa" /><span v-else class="muted small">Sin logo</span></div>
-        <span class="row">
-          <label class="btn btn-sm" :class="{ disabled: logoBusy }">{{ cfg.logo ? 'Cambiar logo' : 'Subir logo' }}<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style="display: none" :disabled="logoBusy" @change="uploadLogo" /></label>
-          <button v-if="cfg.logo" class="btn btn-sm" type="button" :disabled="logoBusy" @click="removeLogo">Quitar logo</button>
-        </span>
-      </div>
-      <p v-if="logoMsg" class="alert alert-ok">{{ logoMsg }}</p>
-
-      <h3>Datos del conductor</h3>
-      <label class="check"><input type="checkbox" :checked="cfg.deca_show_driver" @change="saveTemplate({ show_driver: ($event.target as HTMLInputElement).checked })" /> Imprimir en el DeCA los datos del conductor (nombre, DNI y teléfono)</label>
-      <p class="muted small">El DeCA se descarga con su enlace o QR por quien lo recibe: incluir el DNI y el teléfono del conductor es una decisión de la empresa. Por defecto no se imprimen.</p>
-      <p v-if="tplMsg" class="alert alert-ok">{{ tplMsg }}</p>
-    </section>
-
-    <section v-if="cfg" class="card">
-      <h2>Control de documentos y caducidades</h2>
-      <p class="muted">Documentos de conductores y vehículos (carnet, CAP, tacógrafo, ITV, ATP…) y tarjetas de combustible / VIA-T. Es un control interno: tú anotas la fecha de caducidad de cada documento.</p>
-      <label class="check"><input type="checkbox" :checked="cfg.food_transport" @change="saveDocs(($event.target as HTMLInputElement).checked)" /> La empresa transporta alimentos (muestra ATP, equipo de frío, carné de manipulador y registro sanitario)</label>
-      <form class="row" @submit.prevent="saveDocs()"><label>Avisar con<input v-model.number="warn" type="number" min="1" max="365" class="narrow" /> días de antelación</label><button class="btn btn-sm" type="submit">Guardar</button></form>
-      <p v-if="docMsg" class="alert alert-ok">{{ docMsg }}</p>
-    </section>
-
-    <section v-if="cfg" class="card">
-      <h2>Dirección pública de los DeCA</h2>
-      <p class="muted">Es la dirección que se imprime en el QR de cada DeCA nuevo. Cámbiala aquí cuando cambie el dominio o el servidor: no hace falta tocar ningún fichero.</p>
-      <p>Dirección actual: <b class="mono">{{ cfg.public_base_url ?? 'sin configurar' }}</b>
-        <span class="muted small"> · {{ cfg.source === 'web' ? 'fijada desde esta pantalla' : 'tomada de la instalación (.env)' }}</span></p>
-      <p v-if="cfg.error" class="alert alert-err">{{ cfg.error }}</p>
-      <p v-if="cfg.public_base_url && !cfg.https" class="alert alert-warn">Esta dirección no usa https. La Resolución exige https para el QR del DeCA: solo vale para pruebas.</p>
-      <p v-if="cfg.decas_other_base" class="alert alert-info">{{ cfg.decas_other_base }} de {{ cfg.decas_total }} DeCA ya emitidos llevan otra dirección en su QR. Siguen funcionando mientras esa dirección apunte a este servidor.</p>
-      <div v-if="cfg.decas_other_base" class="stack">
-        <label>Motivo de la reemisión<input v-model="bulkReason" maxlength="500" /></label>
-        <button class="btn" type="button" :disabled="bulkBusy || bulkReason.trim().length < 3" @click="reissueAll">{{ bulkBusy ? 'Reemitiendo…' : `Reemitir ${cfg.decas_other_base} DeCA con la dirección actual` }}</button>
-        <p class="muted small">Genera PDF y QR nuevos con los mismos datos. Los anteriores se conservan (no se borran) y sus enlaces siguen funcionando. También se puede hacer DeCA a DeCA desde el detalle de cada transporte.</p>
-      </div>
-      <p v-if="bulkMsg" class="alert alert-ok">{{ bulkMsg }}</p>
-      <form class="stack" @submit.prevent="save">
-        <label>Nueva dirección pública<input v-model="url" type="text" inputmode="url" placeholder="https://decargo.tuempresa.com" maxlength="255" autocomplete="off" /></label>
-        <div class="row">
-          <button class="btn" type="button" :disabled="busy.check || !url" @click="runCheck">{{ busy.check ? 'Comprobando…' : 'Comprobar' }}</button>
-          <button class="btn btn-primary" type="submit" :disabled="busy.save || !url || url === cfg.public_base_url">{{ busy.save ? 'Guardando…' : 'Guardar' }}</button>
-        </div>
-      </form>
-      <p v-if="saved" class="alert alert-ok">{{ saved }}</p>
-      <div v-if="check" class="stack">
-        <p v-if="!check.checked" class="alert alert-info">No se puede comprobar desde el servidor ({{ check.reason === 'privada' ? 'el dominio apunta a una dirección interna' : 'el dominio no se resuelve desde aquí' }}). Pruébala desde un navegador: la web en «/» y un DeCA en «/d/…».</p>
-        <template v-else>
-          <p :class="['alert', check.web?.ok ? 'alert-ok' : 'alert-err']">{{ check.web?.ok ? '✔' : '✘' }} Web: {{ check.web?.detail }}</p>
-          <p :class="['alert', check.docs?.ok ? 'alert-ok' : 'alert-err']">{{ check.docs?.ok ? '✔' : '✘' }} Documentos: {{ check.docs?.detail }}</p>
+    <div v-if="cfg" class="cfg">
+      <nav class="cfg-nav" aria-label="Apartados de la configuración">
+        <template v-for="g in GROUPS" :key="g.g">
+          <div class="cfg-nav-g">{{ g.g }}</div>
+          <a v-for="i in g.items" :key="i.id" :href="`#${i.id}`" :class="{ on: active === i.id }" @click.prevent="go(i.id)">{{ i.t }}</a>
         </template>
+      </nav>
+
+      <div class="cfg-main">
+        <!-- ============================== Datos de la empresa -->
+        <section id="empresa" class="cfg-sec">
+          <header class="cfg-head"><div><h2>Datos de la empresa</h2><p>Transportista efectivo (apartado b del DeCA) que llevarán por defecto los transportes nuevos. En un transporte concreto se puede indicar otro; los DeCA ya emitidos conservan los suyos.</p></div></header>
+          <form @submit.prevent="saveCompany">
+            <div class="cfg-body cfg-grid">
+              <label class="c8">Nombre o denominación social<input v-model="co.name" required maxlength="120" /></label>
+              <label class="c4">NIF<input v-model="co.nif" required maxlength="16" /></label>
+              <label class="c12">Domicilio (calle y número)<input v-model="co.address" required maxlength="200" /></label>
+              <label class="c3">Código postal<input v-model="co.postal_code" maxlength="10" inputmode="numeric" /></label>
+              <label class="c4">Localidad<input v-model="co.city" maxlength="80" /></label>
+              <label class="c3">Provincia<input v-model="co.province" maxlength="80" /></label>
+              <label class="c2">País<input v-model="co.country" maxlength="60" placeholder="España" /></label>
+              <label class="c6">Nº de autorización de transporte<input v-model="co.transport_authorization" maxlength="30" /><span class="hint">Opcional. El de la autorización de transporte público de mercancías (Registro de Empresas y Actividades de Transporte). Sale en el Modelo DECARGO.</span></label>
+            </div>
+            <footer class="cfg-foot"><span v-if="coMsg" class="cfg-msg ok">{{ coMsg }}</span><button class="btn btn-primary btn-sm" type="submit">Guardar cambios</button></footer>
+          </form>
+        </section>
+
+        <!-- ============================== Documento (DeCA) -->
+        <section id="documento" class="cfg-sec">
+          <header class="cfg-head"><div><h2>Documento (DeCA)</h2><p>Los DeCA se emiten con el <b>Modelo DECARGO</b>: en fichas y en una sola página, con cabecera con QR, intervinientes, carga y entrega con hora, vehículo y conductor, mercancía y observaciones.</p></div></header>
+          <div class="cfg-rows">
+            <div class="cfg-row">
+              <div class="cfg-row-t"><b>Vista previa del modelo</b><p>Un ejemplo con datos ficticios, o el formulario en blanco para imprimir.</p></div>
+              <div class="cfg-row-c"><button class="btn btn-sm" type="button" @click="showTpl('ejemplo', 'Ejemplo · Modelo DECARGO')">Ver ejemplo</button>
+                <button class="btn btn-sm" type="button" @click="showTpl('blanco', 'En blanco · Modelo DECARGO')">Formulario en blanco</button></div>
+            </div>
+            <div class="cfg-row">
+              <div class="cfg-row-t"><b>Logo de la empresa</b><p>Sale en la cabecera del DeCA, a la izquierda (el QR va a la derecha). PNG, JPEG, WebP o SVG; mejor con fondo transparente o blanco. Solo cambia los DeCA que se emitan a partir de ahora: los ya emitidos, y sus versiones, conservan el logo con el que se emitieron.</p></div>
+              <div class="cfg-row-c logo-ctl">
+                <div class="logo-box"><img v-if="logoUrl" :src="logoUrl" alt="Logo de la empresa" /><span v-else class="muted small">Sin logo</span></div>
+                <span class="row">
+                  <label class="btn btn-sm" :class="{ disabled: logoBusy }">{{ cfg.logo ? 'Cambiar logo' : 'Subir logo' }}<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" class="hidden" :disabled="logoBusy" @change="uploadLogo" /></label>
+                  <button v-if="cfg.logo" class="btn btn-sm" type="button" :disabled="logoBusy" @click="removeLogo">Quitar logo</button>
+                </span>
+              </div>
+            </div>
+            <div v-if="logoMsg" class="cfg-rowmsg"><span class="cfg-msg ok">{{ logoMsg }}</span></div>
+            <div class="cfg-row">
+              <div class="cfg-row-t"><b>Datos del conductor</b><p>El DeCA se descarga con su enlace o QR por quien lo recibe: incluir el DNI y el teléfono del conductor es una decisión de la empresa. Por defecto no se imprimen.</p></div>
+              <div class="cfg-row-c"><label class="cfg-check"><input type="checkbox" :checked="cfg.deca_show_driver" @change="saveTemplate({ show_driver: ($event.target as HTMLInputElement).checked })" /> Imprimir nombre, DNI y teléfono</label></div>
+            </div>
+            <div v-if="tplMsg" class="cfg-rowmsg"><span class="cfg-msg ok">{{ tplMsg }}</span></div>
+          </div>
+        </section>
+
+        <!-- ============================== Control de caducidades -->
+        <section id="caducidades" class="cfg-sec">
+          <header class="cfg-head"><div><h2>Control de documentos y caducidades</h2><p>Documentos de conductores y vehículos (carnet, CAP, tacógrafo, ITV, ATP…) y tarjetas de combustible / VIA-T. Es un control interno: tú anotas la fecha de caducidad de cada documento.</p></div></header>
+          <div class="cfg-rows">
+            <div class="cfg-row">
+              <div class="cfg-row-t"><b>Transporte de alimentos</b><p>Muestra ATP, equipo de frío, carné de manipulador y registro sanitario.</p></div>
+              <div class="cfg-row-c"><label class="cfg-check"><input type="checkbox" :checked="cfg.food_transport" @change="saveDocs(($event.target as HTMLInputElement).checked)" /> La empresa transporta alimentos</label></div>
+            </div>
+            <form class="cfg-row" @submit.prevent="saveDocs()">
+              <div class="cfg-row-t"><b>Aviso de caducidad</b><p>Con cuántos días de antelación una caducidad pasa a «próxima».</p></div>
+              <div class="cfg-row-c"><label class="cfg-inline">Avisar con <input v-model.number="warn" type="number" min="1" max="365" class="narrow" /> días</label><button class="btn btn-sm" type="submit">Guardar</button></div>
+            </form>
+            <div v-if="docMsg" class="cfg-rowmsg"><span class="cfg-msg ok">{{ docMsg }}</span></div>
+          </div>
+        </section>
+
+        <!-- ============================== Dirección pública -->
+        <section id="direccion" class="cfg-sec">
+          <header class="cfg-head"><div><h2>Dirección pública de los DeCA</h2><p>Es la dirección que se imprime en el QR de cada DeCA nuevo. Cámbiala aquí cuando cambie el dominio o el servidor: no hace falta tocar ningún fichero.</p></div>
+            <span :class="['badge', cfg.https ? 'b-fin' : 'b-pend']">{{ cfg.https ? 'https ✔' : 'sin https' }}</span></header>
+          <div class="cfg-body stack">
+            <dl class="kv"><dt>Dirección actual</dt><dd><span class="mono">{{ cfg.public_base_url ?? 'sin configurar' }}</span> <span class="muted small">· {{ cfg.source === 'web' ? 'fijada desde esta pantalla' : 'tomada de la instalación (.env)' }}</span></dd></dl>
+            <p v-if="cfg.error" class="alert alert-err">{{ cfg.error }}</p>
+            <p v-if="cfg.public_base_url && !cfg.https" class="alert alert-warn">Esta dirección no usa https. La Resolución exige https para el QR del DeCA: solo vale para pruebas.</p>
+            <div v-if="cfg.decas_other_base" class="alert alert-info stack">
+              <p>{{ cfg.decas_other_base }} de {{ cfg.decas_total }} DeCA ya emitidos llevan otra dirección en su QR. Siguen funcionando mientras esa dirección apunte a este servidor.</p>
+              <label>Motivo de la reemisión<input v-model="bulkReason" maxlength="500" /></label>
+              <button class="btn btn-sm" type="button" :disabled="bulkBusy || bulkReason.trim().length < 3" @click="reissueAll">{{ bulkBusy ? 'Reemitiendo…' : `Reemitir ${cfg.decas_other_base} DeCA con la dirección actual` }}</button>
+              <p class="small">Genera PDF y QR nuevos con los mismos datos. Los anteriores se conservan (no se borran) y sus enlaces siguen funcionando. También se puede hacer DeCA a DeCA desde el detalle de cada transporte.</p>
+            </div>
+            <p v-if="bulkMsg" class="alert alert-ok">{{ bulkMsg }}</p>
+            <form class="cfg-inline-form" @submit.prevent="save">
+              <label class="grow">Nueva dirección pública<input v-model="url" type="text" inputmode="url" placeholder="https://decargo.tuempresa.com" maxlength="255" autocomplete="off" /></label>
+              <button class="btn btn-sm" type="button" :disabled="busy.check || !url" @click="runCheck">{{ busy.check ? 'Comprobando…' : 'Comprobar' }}</button>
+              <button class="btn btn-primary btn-sm" type="submit" :disabled="busy.save || !url || url === cfg.public_base_url">{{ busy.save ? 'Guardando…' : 'Guardar' }}</button>
+            </form>
+            <p v-if="saved" class="alert alert-ok">{{ saved }}</p>
+            <div v-if="check" class="stack">
+              <p v-if="!check.checked" class="alert alert-info">No se puede comprobar desde el servidor ({{ check.reason === 'privada' ? 'el dominio apunta a una dirección interna' : 'el dominio no se resuelve desde aquí' }}). Pruébala desde un navegador: la web en «/» y un DeCA en «/d/…».</p>
+              <template v-else>
+                <p :class="['alert', check.web?.ok ? 'alert-ok' : 'alert-err']">{{ check.web?.ok ? '✔' : '✘' }} Web: {{ check.web?.detail }}</p>
+                <p :class="['alert', check.docs?.ok ? 'alert-ok' : 'alert-err']">{{ check.docs?.ok ? '✔' : '✘' }} Documentos: {{ check.docs?.detail }}</p>
+              </template>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================== App Android -->
+        <section id="android" class="cfg-sec">
+          <header class="cfg-head"><div><h2>App Android para conductores</h2><p>La app es la misma web dentro de una aplicación que puede <b>encender la pantalla</b> y mostrar el aviso aunque el teléfono esté bloqueado.</p></div>
+            <span :class="['badge', cfg.fcm.configured ? 'b-fin' : 'b-pend']">{{ cfg.fcm.configured ? 'Avisos configurados' : 'Avisos sin configurar' }}</span></header>
+          <div class="cfg-rows">
+            <div class="cfg-row">
+              <div class="cfg-row-t"><b>Descarga</b><p>Desde el teléfono del conductor.</p></div>
+              <div class="cfg-row-c"><a class="mono small" href="/app/decargo.apk">{{ origin }}/app/decargo.apk</a></div>
+            </div>
+            <div class="cfg-row">
+              <div class="cfg-row-t"><b>Avisos (Firebase)</b><p>{{ cfg.fcm.configured ? `Proyecto ${cfg.fcm.project_id}.` : 'Hace falta una sola vez para que lleguen los avisos al móvil.' }}</p></div>
+              <div class="cfg-row-c"><span :class="cfg.fcm.configured ? 'cfg-st ok' : 'cfg-st ko'">{{ cfg.fcm.configured ? '✔ configurados' : '✘ sin configurar' }}</span></div>
+            </div>
+          </div>
+          <details class="cfg-details" :open="!cfg.fcm.configured">
+            <summary>{{ cfg.fcm.configured ? 'Cambiar las credenciales de Firebase' : 'Cómo configurar los avisos (una sola vez)' }}</summary>
+            <div class="cfg-body stack">
+              <ol class="small">
+                <li>Entra en <span class="mono">console.firebase.google.com</span> con la cuenta de Google de la empresa y crea un proyecto (gratuito).</li>
+                <li>Añade una app <b>Android</b> con el nombre de paquete <b class="mono">{{ cfg.fcm.package }}</b> y descarga <b class="mono">google-services.json</b>.</li>
+                <li>Configuración del proyecto → Cuentas de servicio → <b>Generar nueva clave privada</b> (descarga otro JSON).</li>
+                <li>Sube aquí los dos ficheros. Se comprueban con Google antes de guardarse; la clave privada se guarda cifrada.</li>
+              </ol>
+              <div class="cfg-grid">
+                <label class="c6">google-services.json<input type="file" accept="application/json,.json" @change="readJson('gs', $event)" /></label>
+                <label class="c6">Clave de la cuenta de servicio (.json)<input type="file" accept="application/json,.json" @change="readJson('sa', $event)" /></label>
+              </div>
+              <p class="row"><button class="btn btn-primary btn-sm" type="button" :disabled="fcmBusy || !fcmNames.gs || !fcmNames.sa" @click="saveFcm()">{{ fcmBusy ? 'Comprobando…' : 'Guardar y comprobar' }}</button>
+                <button v-if="cfg.fcm.configured" class="btn btn-sm" type="button" :disabled="fcmBusy" @click="saveFcm(true)">Quitar</button></p>
+            </div>
+          </details>
+          <div v-if="fcmMsg" class="cfg-rowmsg"><span class="cfg-msg ok">{{ fcmMsg }}</span></div>
+        </section>
+
+        <!-- ============================== Modo de pruebas -->
+        <section id="pruebas" class="cfg-sec">
+          <header class="cfg-head"><div><h2>Modo de pruebas y uso con datos reales</h2><p>Antes de empezar a trabajar de verdad: desactiva el modo de pruebas y elimina los datos de ejemplo con <span class="mono">./deca purge-examples</span> en el servidor.</p></div>
+            <span :class="['badge', cfg.test_mode ? 'b-pend' : 'b-fin']">{{ cfg.test_mode ? 'Modo de pruebas activo' : 'Uso real' }}</span></header>
+          <ul class="cfg-flags">
+            <li><span :class="['cfg-dot', cfg.https ? 'ok' : 'ko']">{{ cfg.https ? '✔' : '✘' }}</span><div class="cfg-row-t"><b>Dirección pública con https</b></div></li>
+            <li><span :class="['cfg-dot', cfg.test_mode ? 'ko' : 'ok']">{{ cfg.test_mode ? '✘' : '✔' }}</span>
+              <div class="cfg-row-t"><b>Rótulo «DOCUMENTO DE PRUEBA»</b><p>{{ cfg.test_mode ? 'Activo: los PDF nuevos NO son válidos.' : 'Desactivado: los PDF nuevos se emiten como reales.' }}</p></div>
+              <button class="btn btn-sm" :class="cfg.test_mode ? 'btn-primary' : ''" type="button" :disabled="flagBusy === 'test_mode'" @click="setFlag('test_mode', !cfg.test_mode)">{{ cfg.test_mode ? 'Desactivar modo de pruebas' : 'Volver al modo de pruebas' }}</button></li>
+            <li><span :class="['cfg-dot', cfg.dev_endpoints ? 'ko' : 'ok']">{{ cfg.dev_endpoints ? '✘' : '✔' }}</span>
+              <div class="cfg-row-t"><b>Endpoints de prueba</b><p>{{ cfg.dev_endpoints ? 'Activos (solo para pruebas técnicas).' : 'Desactivados.' }}</p></div>
+              <button v-if="cfg.dev_endpoints || cfg.dev_endpoints_available" class="btn btn-sm" :class="cfg.dev_endpoints ? 'btn-primary' : ''" type="button" :disabled="flagBusy === 'dev_endpoints'" @click="setFlag('dev_endpoints', !cfg.dev_endpoints)">{{ cfg.dev_endpoints ? 'Desactivar' : 'Activar' }}</button></li>
+            <li><span :class="['cfg-dot', cfg.push_configured ? 'ok' : 'ko']">{{ cfg.push_configured ? '✔' : '✘' }}</span><div class="cfg-row-t"><b>Avisos al móvil (Web Push)</b><p>{{ cfg.push_configured ? 'Configurados.' : 'Sin claves VAPID.' }}</p></div></li>
+          </ul>
+        </section>
+
+        <!-- ============================== Traslado de servidor -->
+        <section id="traslado" class="cfg-sec">
+          <header class="cfg-head"><div><h2>Trasladar DECARGO a otro servidor</h2><p>Cinco pasos. Los comandos se escriben en una terminal del servidor, dentro de la carpeta de DECARGO.</p></div></header>
+          <ol class="cfg-steps">
+            <li v-for="s in steps" :key="s.t">
+              <div class="cfg-step-t"><b>{{ s.t }}</b><p>{{ s.n }}</p>
+                <div v-if="s.c" class="cmd"><code class="mono">{{ s.c }}</code><button class="btn btn-sm" type="button" @click="copy(s.c)">{{ copied === s.c ? 'Copiado' : 'Copiar' }}</button></div></div>
+            </li>
+          </ol>
+        </section>
       </div>
-    </section>
+    </div>
 
-    <section v-if="cfg" class="card">
-      <h2>App Android para conductores</h2>
-      <p>La app es la misma web dentro de una aplicación que puede <b>encender la pantalla</b> y mostrar el aviso aunque el teléfono esté bloqueado.
-        Descárgala desde el teléfono del conductor: <a class="mono" href="/app/decargo.apk">{{ origin }}/app/decargo.apk</a></p>
-      <p>Avisos de la app: <b>{{ cfg.fcm.configured ? `✔ configurados (proyecto ${cfg.fcm.project_id})` : '✘ sin configurar' }}</b></p>
-      <details :open="!cfg.fcm.configured">
-        <summary>{{ cfg.fcm.configured ? 'Cambiar las credenciales de Firebase' : 'Cómo configurarlos (una sola vez)' }}</summary>
-        <ol class="small">
-          <li>Entra en <span class="mono">console.firebase.google.com</span> con la cuenta de Google de la empresa y crea un proyecto (gratuito).</li>
-          <li>Añade una app <b>Android</b> con el nombre de paquete <b class="mono">{{ cfg.fcm.package }}</b> y descarga <b class="mono">google-services.json</b>.</li>
-          <li>Configuración del proyecto → Cuentas de servicio → <b>Generar nueva clave privada</b> (descarga otro JSON).</li>
-          <li>Sube aquí los dos ficheros. Se comprueban con Google antes de guardarse; la clave privada se guarda cifrada.</li>
-        </ol>
-        <div class="grid2">
-          <label>google-services.json<input type="file" accept="application/json,.json" @change="readJson('gs', $event)" /></label>
-          <label>Clave de la cuenta de servicio (.json)<input type="file" accept="application/json,.json" @change="readJson('sa', $event)" /></label>
-        </div>
-        <p class="row"><button class="btn btn-primary" type="button" :disabled="fcmBusy || !fcmNames.gs || !fcmNames.sa" @click="saveFcm()">{{ fcmBusy ? 'Comprobando…' : 'Guardar y comprobar' }}</button>
-          <button v-if="cfg.fcm.configured" class="btn" type="button" :disabled="fcmBusy" @click="saveFcm(true)">Quitar</button></p>
-      </details>
-      <p v-if="fcmMsg" class="alert alert-ok">{{ fcmMsg }}</p>
-    </section>
-
-    <section v-if="cfg" class="card">
-      <h2>Modo de pruebas y uso con datos reales</h2>
-      <ul class="plain flags">
-        <li><b>{{ cfg.https ? '✔' : '✘' }}</b> Dirección pública con https</li>
-        <li><b>{{ cfg.test_mode ? '✘' : '✔' }}</b>
-          <span class="grow"><b>Rótulo «DOCUMENTO DE PRUEBA»</b> {{ cfg.test_mode ? 'activo: los PDF nuevos NO son válidos.' : 'desactivado: los PDF nuevos se emiten como reales.' }}</span>
-          <button class="btn btn-sm" :class="cfg.test_mode ? 'btn-primary' : ''" type="button" :disabled="flagBusy === 'test_mode'" @click="setFlag('test_mode', !cfg.test_mode)">{{ cfg.test_mode ? 'Desactivar modo de pruebas' : 'Volver al modo de pruebas' }}</button></li>
-        <li><b>{{ cfg.dev_endpoints ? '✘' : '✔' }}</b>
-          <span class="grow"><b>Endpoints de prueba</b> {{ cfg.dev_endpoints ? 'activos (solo para pruebas técnicas).' : 'desactivados.' }}</span>
-          <button v-if="cfg.dev_endpoints || cfg.dev_endpoints_available" class="btn btn-sm" :class="cfg.dev_endpoints ? 'btn-primary' : ''" type="button" :disabled="flagBusy === 'dev_endpoints'" @click="setFlag('dev_endpoints', !cfg.dev_endpoints)">{{ cfg.dev_endpoints ? 'Desactivar' : 'Activar' }}</button></li>
-        <li><b>{{ cfg.push_configured ? '✔' : '✘' }}</b> Avisos al móvil (Web Push) {{ cfg.push_configured ? 'configurados' : 'sin claves VAPID' }}</li>
-      </ul>
-      <p class="muted small">Antes de empezar a trabajar de verdad: desactiva el modo de pruebas y elimina los datos de ejemplo con <span class="mono">./deca purge-examples</span> en el servidor.</p>
-    </section>
-
-    <section class="card">
-      <h2>Trasladar DECARGO a otro servidor</h2>
-      <p class="muted">Cinco pasos. Los comandos se escriben en una terminal del servidor, dentro de la carpeta de DECARGO.</p>
-      <ol class="steps">
-        <li v-for="s in steps" :key="s.t">
-          <b>{{ s.t }}</b>
-          <div v-if="s.c" class="cmd"><code class="mono">{{ s.c }}</code><button class="btn btn-sm" type="button" @click="copy(s.c)">{{ copied === s.c ? 'Copiado' : 'Copiar' }}</button></div>
-          <p class="muted small">{{ s.n }}</p>
-        </li>
-      </ol>
-    </section>
   </template>
   <FileViewer v-if="preview" :title="preview.title" :path="preview.path" :kind="preview.kind" :filename="preview.filename" @close="preview = null" />
 </template>
