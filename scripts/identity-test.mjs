@@ -1614,6 +1614,55 @@ async function run() {
   const qrep = await activate({ username: qf.get('u'), code: qf.get('c') }, PW(), 'App Android');
   check(qrep.status !== 200, 'el mismo QR no sirve dos veces');
 
+  // ---- 16.27 Ubicación de los lugares al crear el transporte: se guarda en la agenda y vuelve a salir al buscar la empresa
+  info('16.27 Ubicación de los lugares y empresas nuevas');
+  const k27_nPar = () => Number(psql(`SELECT count(*) FROM party`)), k27_nTr = () => Number(psql(`SELECT count(*) FROM transport`));
+  const k27_G = 'https://www.google.com/maps/@37.177336,-3.598557,17z', k27_co = `Ubicada ${sfx} S.L.`, k27_notes = 'Muelle 3, llamar antes';
+  const k27_mk = (o = {}) => tb({ cargo: `Ubicación ${sfx}`, driver_id: undefined, origins: [{ address: 'Almacén U 1, Granada' }],
+    destinations: [{ party: k27_co, address: 'Polígono U 7, 18200 Maracena', city: 'Maracena', location: { map_url: k27_G, notes: k27_notes } }], ...o });
+  const k27_site = (name) => psql(`SELECT coalesce(s.lat::float8::text,'-')||'|'||coalesce(s.lon::float8::text,'-')||'|'||coalesce(s.map_url,'-')||'|'||coalesce(s.notes,'-') FROM party_site s JOIN party p ON p.id = s.party_id WHERE p.name = '${name}'`);
+  const k27_p0 = k27_nPar();
+  const k27_t1 = await call('POST', '/api/v1/transports', { token: O, body: k27_mk() });
+  check(k27_t1.status === 201 && k27_t1.json.registered.parties === 1 && k27_t1.json.registered.sites === 1 && k27_t1.json.registered.located === 1 && k27_nPar() === k27_p0 + 1 && k27_site(k27_co) === `37.177336|-3.598557|${k27_G}|${k27_notes}`,
+    'una empresa que no estaba en la agenda se registra al crear el transporte, con su lugar y la ubicación indicada (coordenadas sacadas del enlace del mapa)', `${k27_t1.status} ${k27_t1.text}`);
+  const k27_d = (await call('GET', `/api/v1/transports/${k27_t1.json.id}`, { token: O })).json;
+  check(/37\.177336,-3\.598557/.test(k27_d.destinations[0].maps_url ?? '') && JSON.stringify(k27_d.destinations[0]).includes('Muelle 3') && !!k27_d.destinations[0].site_id && psql(`SELECT (origin->'stops'->0 ? 'location') OR (destination->'stops'->0 ? 'location') FROM transport WHERE id = '${k27_t1.json.id}'`) === 'f',
+    'el transporte queda enlazado a ese lugar (el conductor verá «Cómo llegar» y las indicaciones) y la ubicación no se copia dentro del transporte');
+  const k27_ps = (await call('GET', `/api/v1/parties?q=${encodeURIComponent(`Ubicada ${sfx}`)}`, { token: O })).json;
+  const k27_pd = k27_ps.length === 1 ? (await call('GET', `/api/v1/parties/${k27_ps[0].id}`, { token: O })).json : null;
+  const k27_s0 = k27_pd?.sites?.[0];
+  check(!!k27_pd && k27_pd.sites.length === 1 && k27_s0.lat === 37.177336 && k27_s0.lon === -3.598557 && k27_s0.map_url === k27_G && k27_s0.notes === k27_notes, 'al buscar la empresa después, su lugar sale con la ubicación y las indicaciones ya cumplimentadas');
+  const k27_reuse = (loc, o = {}) => call('POST', '/api/v1/transports', { token: O, body: k27_mk({ destinations: [{ party: k27_co, party_id: k27_pd.id, site_id: k27_s0.id, address: 'Polígono U 7, 18200 Maracena', city: 'Maracena', ...(loc ? { location: loc } : {}) }], ...o }) });
+  const k27_r1 = await k27_reuse({ map_url: k27_G, lat: '37.177336', lon: '-3.598557', notes: k27_notes }), k27_r2 = await k27_reuse(null);
+  check(k27_r1.status === 201 && k27_r2.status === 201 && k27_r1.json.registered.located === 0 && k27_r2.json.registered.located === 0 && k27_r1.json.registered.parties === 0 && k27_r1.json.registered.sites === 0 && k27_site(k27_co) === `37.177336|-3.598557|${k27_G}|${k27_notes}`,
+    'elegir el lugar guardado con su ubicación tal cual (o sin tocarla) no cambia ni duplica nada');
+  const k27_r3 = await k27_reuse({ lat: '37.2', lon: '-3.6', notes: 'Muelle 5' });
+  check(k27_r3.status === 201 && k27_r3.json.registered.located === 1 && k27_site(k27_co) === `37.2|-3.6|${k27_G}|Muelle 5` && Number(psql(`SELECT count(*) FROM audit_log WHERE action = 'PARTY_SITE_UPDATED' AND entity_id = '${k27_s0.id}' AND after->>'origin' = 'transporte'`)) === 2,
+    'si la oficina corrige la ubicación o las indicaciones al crear el transporte, se actualiza el lugar de la agenda (y queda auditado: al guardarla por primera vez y al corregirla)');
+  await k27_reuse({ map_url: '', lat: '', lon: '', notes: '' });
+  check(k27_site(k27_co) === `37.2|-3.6|${k27_G}|Muelle 5`, 'dejar los campos de ubicación vacíos nunca borra lo guardado');
+  // lugar de la agenda que aún no tenía ubicación
+  const k27_pe = await PA(O, { name: `Sin ubicación ${sfx} S.L.`, address: 'Calle S 1', postal_code: '18001', city: 'Granada', province: 'Granada', country: 'España' });
+  const k27_se = await SI(O, k27_pe.json.id, { kind: 'DESCARGA', address: 'Calle S 1', city: 'Granada' });
+  const k27_t2 = await call('POST', '/api/v1/transports', { token: O, body: k27_mk({ destinations: [{ party: `Sin ubicación ${sfx} S.L.`, party_id: k27_pe.json.id, site_id: k27_se.json.id, address: 'Calle S 1', city: 'Granada', location: { lat: '37.18', lon: '-3.6', notes: 'Puerta lateral' } }] }) });
+  check(k27_t2.status === 201 && k27_t2.json.registered.located === 1 && k27_t2.json.registered.parties === 0 && k27_site(`Sin ubicación ${sfx} S.L.`) === '37.18|-3.6|-|Puerta lateral', 'un lugar de la agenda sin ubicación la recibe al usarlo en un transporte');
+  // lugares de carga y empresa que ya existía con otra dirección
+  const k27_t3 = await call('POST', '/api/v1/transports', { token: O, body: k27_mk({ origins: [{ party: `Origen ubicado ${sfx} S.L.`, address: 'Calle O 3, Almería', city: 'Almería', location: { lat: '36.834', lon: '-2.4637' } }], destinations: [{ address: 'Destino 9, Madrid' }] }) });
+  check(k27_t3.status === 201 && k27_t3.json.registered.parties === 1 && k27_t3.json.registered.located === 1 && k27_site(`Origen ubicado ${sfx} S.L.`) === '36.834|-2.4637|-|-', 'también en los lugares de carga: la empresa nueva se registra con su ubicación');
+  const k27_t4 = await call('POST', '/api/v1/transports', { token: O, body: k27_mk({ destinations: [{ party: k27_co, party_id: k27_pd.id, address: 'Otra nave V 2, 18200 Maracena', city: 'Maracena', location: { map_url: 'https://maps.apple.com/?ll=37.19,-3.59' } }] }) });
+  check(k27_t4.status === 201 && k27_t4.json.registered.parties === 0 && k27_t4.json.registered.sites === 1 && k27_t4.json.registered.located === 1 && psql(`SELECT count(*) FROM party_site s JOIN party p ON p.id = s.party_id WHERE p.name = '${k27_co}' AND s.active`) === '2',
+    'una empresa ya guardada con una dirección nueva suma un lugar nuevo, con su propia ubicación, sin tocar el anterior');
+  // entradas inválidas: se rechazan sin crear nada (ni el transporte ni la empresa nueva)
+  const k27_pN = k27_nPar(), k27_tN = k27_nTr();
+  for (const [loc, why] of [[{ map_url: 'http://www.google.com/maps/@37.1,-3.5,17z' }, 'enlace sin https'], [{ map_url: 'https://intruso.example.com/x' }, 'enlace de un sitio no admitido'], [{ lat: '37.1' }, 'latitud sin longitud'], [{ lat: '99', lon: '1' }, 'latitud fuera de rango'], [{ lat: 'abc', lon: '1' }, 'coordenada no numérica'], [{ notes: 'x'.repeat(501) }, 'indicaciones demasiado largas']]) {
+    const r = await call('POST', '/api/v1/transports', { token: O, body: k27_mk({ destinations: [{ party: `Rechazada ${sfx} S.L.`, address: 'Calle R 1, Granada', city: 'Granada', location: loc }] }) });
+    check(r.status === 400, `ubicación rechazada (${why}) → 400`, `${r.status} ${r.text}`);
+  }
+  const k27_nc = await call('POST', '/api/v1/transports', { token: O, body: k27_mk({ destinations: [{ address: 'Calle N 1, Granada', city: 'Granada', location: { lat: '37.1', lon: '-3.5' } }] }) });
+  check(k27_nc.status === 400 && k27_nc.json.error === 'ubicacion_requiere_empresa' && k27_nc.json.field === 'destinations', 'una ubicación en un lugar sin empresa se rechaza con un aviso claro (no hay dónde guardarla)');
+  check(k27_nPar() === k27_pN && k27_nTr() === k27_tN, 'las ubicaciones rechazadas no han creado ningún transporte ni empresa nueva');
+  check(Number(psql(`SELECT count(*) FROM audit_log WHERE entity_id IN (SELECT id::text FROM party_site) AND action = 'PARTY_SITE_UPDATED' AND after->>'origin' = 'transporte'`)) >= 3, 'cada ubicación guardada desde un transporte queda en la auditoría');
+
   // ---- 16.10 seed de desarrollo
   info('16.10 Seed de desarrollo (credenciales aleatorias, idempotente)');
   const seedState = () => psql(`SELECT (SELECT count(*) FROM app_user)||':'||(SELECT count(*) FROM vehicle)||':'||(SELECT count(*) FROM transport)||':'||(SELECT count(*) FROM deca)||':'||(SELECT md5(string_agg(password_hash, ',' ORDER BY username)) FROM app_user WHERE username LIKE '%.dev')`);

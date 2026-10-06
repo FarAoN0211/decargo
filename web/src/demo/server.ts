@@ -20,7 +20,7 @@ const demoQrSvg = (url: string): Promise<string> => QRCode.toString(url, { type:
 const DEMO_BANNER = 'DEMOSTRACIÓN · DATOS FICTICIOS · SIN VALOR';
 
 type Row = Record<string, any>;
-interface Stop { party: string | null; address: string; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null; party_id?: string | null; site_id?: string | null; pallets?: number | null; references?: string[]; seals?: string[]; time?: string | null; nif?: string | null }
+interface Stop { party: string | null; address: string; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null; party_id?: string | null; site_id?: string | null; pallets?: number | null; references?: string[]; seals?: string[]; time?: string | null; nif?: string | null; location?: Row }
 
 // ----------------------------------------------------------------------------- utilidades
 let seq = 0;
@@ -142,6 +142,48 @@ const vehById = (id: string | null | undefined): Row | undefined => vehicles.fin
 const stopsText = (l: Stop[]): string => l.map((s, i) => `${l.length > 1 ? `${i + 1}) ` : ''}${s.party ? `${s.party} — ` : ''}${fullAddress(s)}${s.pallets != null ? ` · ${palLabel(s.pallets)}` : ''}`).join('\n');
 const siteOf = (s: Stop): Row | undefined => parties.flatMap((p) => p.sites).find((x: Row) => x.id === s.site_id);
 const resolve = (l: Stop[]): Row[] => l.map((s) => { const x = siteOf(s); return { ...s, label: x?.label ?? null, maps_url: x?.lat != null ? `https://www.google.com/maps/search/?api=1&query=${x.lat},${x.lon}` : (x?.map_url ?? null), site_notes: x?.notes ?? null, notes: x?.notes ?? null }; });
+
+const normTxt = (v: string): string => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/** Como la aplicación real: al crear un transporte, las empresas y lugares que no estén en la agenda se guardan, junto con la ubicación que se haya indicado. */
+function registerInAgenda(b: Row, origins: Stop[], destinations: Stop[], otherCarrier: boolean): { parties: number; sites: number; located: number } {
+  const reg = { parties: 0, sites: 0, located: 0 };
+  const upsert = (name: string, nif: string | null, address: string | null, postal: string | null, city: string | null): Row => {
+    let p = nif ? parties.find((y) => y.nif && y.nif.toUpperCase() === nif.toUpperCase()) : parties.find((y) => y.active && normTxt(y.name) === normTxt(name));
+    if (p) { p.use_count++; p.last_used_at = new Date().toISOString(); return p; }
+    p = party(name, nif, address ?? '', postal ?? '', city ?? '', []); p.use_count = 1; parties.push(p); reg.parties++; return p;
+  };
+  upsert(String(b.shipper_name), opt(b.shipper_nif), opt(b.shipper_address), opt(b.shipper_postal_code), opt(b.shipper_city));
+  if (otherCarrier) upsert(String(b.carrier_name), opt(b.carrier_nif), opt(b.carrier_address), opt(b.carrier_postal_code), opt(b.carrier_city));
+  for (const [list, kind] of [[origins, 'CARGA'], [destinations, 'DESCARGA']] as const) {
+    for (const st of list) {
+      const loc = st.location; delete st.location;
+      let site = st.site_id ? parties.flatMap((p) => p.sites).find((x: Row) => x.id === st.site_id) : undefined;
+      if (!site) {
+        if (!st.party) { if (loc) throw new DemoError(400, 'ubicacion_requiere_empresa', { field: kind === 'CARGA' ? 'origins' : 'destinations' }); continue; }
+        const p = (st.party_id && parties.find((y) => y.id === st.party_id)) || upsert(st.party, null, st.address, st.postal_code ?? null, st.city ?? null);
+        site = p.sites.find((x: Row) => normTxt(`${x.address} ${x.city ?? ''}`) === normTxt(`${st.address} ${st.city ?? ''}`));
+        if (!site) {
+          site = { id: uid(), label: null, kind, address: st.address, postal_code: st.postal_code ?? null, city: st.city ?? null, province: st.province ?? null, country: st.country ?? null, lat: null, lon: null, map_url: null, notes: null, active: true };
+          p.sites.push(site); reg.sites++;
+        }
+        st.party_id = p.id; st.site_id = site.id;
+      }
+      if (!loc) continue;
+      let url: string | null = null;
+      if (loc.map_url) { try { const u = new URL(loc.map_url); if (u.protocol !== 'https:') throw 0; url = u.toString(); } catch { throw bad('map_url'); } }
+      let lat = loc.lat === null ? null : Number(String(loc.lat).replace(',', '.')), lon = loc.lon === null ? null : Number(String(loc.lon).replace(',', '.'));
+      if ((lat === null) !== (lon === null) || (lat !== null && (!Number.isFinite(lat) || Math.abs(lat) > 90))) throw bad(lat === null ? 'lat' : 'lon');
+      if (lon !== null && (!Number.isFinite(lon) || Math.abs(lon) > 180)) throw bad('lon');
+      if (lat === null && url) { const m = /@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/.exec(url) ?? /!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/.exec(url); if (m) { lat = Number(m[1]); lon = Number(m[2]); } }
+      let changed = false;
+      if (lat !== null && (site.lat !== lat || site.lon !== lon)) { site.lat = lat; site.lon = lon; changed = true; }
+      if (url && site.map_url !== url) { site.map_url = url; changed = true; }
+      if (loc.notes && site.notes !== loc.notes) { site.notes = loc.notes; changed = true; }
+      if (changed) reg.located++;
+    }
+  }
+  return reg;
+}
 
 function listRow(t: Row): Row {
   const d = userById(t.driver_id);
@@ -311,6 +353,7 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
           party_id: opt(s.party_id), site_id: opt(s.site_id), pallets: s.pallets === undefined || s.pallets === '' ? null : Number(s.pallets),
           references: typeof s.references === 'string' ? s.references.split(',').map((y: string) => y.trim()).filter(Boolean) : [], seals: typeof s.seals === 'string' ? s.seals.split(',').map((y: string) => y.trim()).filter(Boolean) : [],
           time: opt(s.time) };
+        if (s.location && typeof s.location === 'object') { const l = { map_url: opt(s.location.map_url), lat: opt(String(s.location.lat ?? '')), lon: opt(String(s.location.lon ?? '')), notes: opt(s.location.notes) }; if (Object.values(l).some(Boolean)) st.location = l; }
         if (st.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(st.time)) throw bad('time');
         if (!st.city && !/,\s*[^\d,]{2,}$/.test(st.address)) throw new DemoError(400, 'localidad_requerida', { field });
         return st;
@@ -329,6 +372,7 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
     if (!packages && units !== null) packages = `${units} ${packaging ?? (units === 1 ? 'bulto' : 'bultos')}`;
     if (!packages && loaded) packages = palLabel(loaded);
     const other = !!opt(b.carrier_name);
+    const reg = registerInAgenda(b, origins, destinations, other);
     const t: Row = { id: uid(), created_at: new Date().toISOString(), transport_date: date, category: 'PUBLICO', status: b.driver_id ? 'EN_CURSO' : 'PENDIENTE',
       shipper: { name: req(b.shipper_name, 'shipper_name', 2), nif: req(b.shipper_nif, 'shipper_nif', 5), address: fullAddress({ address: opt(b.shipper_address), postal_code: opt(b.shipper_postal_code), city: opt(b.shipper_city), province: opt(b.shipper_province), country: opt(b.shipper_country) }) },
       carrier: other ? { name: b.carrier_name, nif: req(b.carrier_nif, 'carrier_nif', 5) } : { name: company.name, nif: company.nif },
@@ -339,9 +383,8 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
       reference: nextRef(), carrier_authorization: other ? carrierAuth : null, units, packaging, adr, adr_detail: adr ? opt(b.adr_detail) : null };
     if (generate) issue(t);
     transports.push(t);
-    // La agenda aprende las empresas nuevas (como en la aplicación real)
-    for (const s of [...origins, ...destinations]) if (s.party && !s.party_id && !parties.some((p) => p.name.toLowerCase() === s.party!.toLowerCase())) parties.push(party(s.party, null, s.address, s.postal_code ?? '', s.city ?? '', [{ address: s.address, kind: 'AMBOS' }]));
-    return ok({ id: t.id, reference: t.reference, deca_id: t.deca?.id ?? null, registered: { parties: 0, sites: 0 } }, 201);
+
+    return ok({ id: t.id, reference: t.reference, deca_id: t.deca?.id ?? null, registered: reg }, 201);
   }
   if ((x = m(/^\/transports\/([^/]+)$/)) && method === 'GET') return ok(detail(transportBy(x[1])));
   if ((x = m(/^\/transports\/([^/]+)\/deca$/)) && method === 'POST') {

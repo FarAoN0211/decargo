@@ -72,7 +72,7 @@ onMounted(load);
 </script>
 <template>
   <div class="page-title">
-    <p v-if="agendaNew[0] || agendaNew[1]" class="alert alert-ok">Guardado en tu agenda de empresas: {{ agendaNew[0] }} empresa{{ agendaNew[0] === 1 ? '' : 's' }} y {{ agendaNew[1] }} lugar{{ agendaNew[1] === 1 ? '' : 'es' }} nuevos. La próxima vez bastará con buscarlos por el nombre.</p>
+    <p v-if="agendaNew[0] || agendaNew[1] || agendaNew[2]" class="alert alert-ok">Guardado en tu agenda de empresas: {{ [agendaNew[0] ? `${agendaNew[0]} empresa${agendaNew[0] === 1 ? '' : 's'} nueva${agendaNew[0] === 1 ? '' : 's'}` : '', agendaNew[1] ? `${agendaNew[1]} lugar${agendaNew[1] === 1 ? '' : 'es'} nuevo${agendaNew[1] === 1 ? '' : 's'}` : '', agendaNew[2] ? `la ubicación de ${agendaNew[2]} lugar${agendaNew[2] === 1 ? '' : 'es'}` : ''].filter(Boolean).join(', ') }}. La próxima vez bastará con buscar la empresa por el nombre: saldrá con su ubicación.</p>
     <h1 v-if="t">{{ t.origins[0].city || t.origins[0].address }}<small v-if="t.origins.length > 1"> (+{{ t.origins.length - 1 }})</small> → {{ t.destinations[0].city || t.destinations[0].address }}<small v-if="t.destinations.length > 1"> (+{{ t.destinations.length - 1 }})</small></h1><h1 v-else>Transporte</h1>
     <RouterLink class="btn" to="/oficina/transportes">← Transportes</RouterLink>
   </div>

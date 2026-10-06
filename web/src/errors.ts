@@ -1,6 +1,7 @@
 import { ApiError } from './api';
 
 const FIELDS: Record<string, string> = {
+  location: 'la ubicación del lugar',
   carrier_name: 'el nombre del transportista', carrier_nif: 'el NIF del transportista', shipper_name: 'el nombre del cargador', shipper_nif: 'el NIF del cargador', shipper_address: 'el domicilio del cargador', origin: 'el origen', destination: 'el destino',
   transport_date: 'la fecha', cargo: 'la mercancía', weight_kg: 'el peso (o indica otra magnitud)', alt_magnitude: 'la otra magnitud', aec_ref: 'la autorización especial',
   remarks: 'las observaciones', driver_id: 'el conductor', tractor_id: 'el vehículo (debe ser una tractora o un rígido activo)', trailer_id: 'el remolque (debe ser compatible con el vehículo)',
@@ -36,6 +37,7 @@ export function messageFor(e: unknown): string {
     case 'fcm_proyecto_distinto': return 'Los dos ficheros son de proyectos de Firebase distintos.';
     case 'fcm_credenciales': return 'Google no ha aceptado la clave de la cuenta de servicio (puede estar revocada). Genera una nueva.';
     case 'fcm_no_configurado': return 'La empresa aún no ha configurado los avisos de la app Android.';
+    case 'ubicacion_requiere_empresa': return `Has indicado la ubicación de un lugar de ${d.field === 'origins' ? 'carga' : 'descarga'} sin escribir su empresa. Escribe la empresa para guardar la ubicación en la agenda, o borra la ubicación.`;
     case 'localidad_requerida': return `Indica la localidad de ${d.field === 'origins' ? 'cada lugar de carga' : 'cada lugar de descarga'}: es lo que sale en la casilla «Lugar de ${d.field === 'origins' ? 'origen' : 'destino'}» del DeCA (nunca la calle).`;
     case 'relevo_mismo_conductor': return 'Ese conductor ya lleva el transporte: elige otro para el relevo.';
     case 'demo_no_disponible': return 'Esta función no está disponible en la demostración.';

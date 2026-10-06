@@ -70,7 +70,9 @@ export function plate(v: unknown, field = 'plate'): { display: string; norm: str
 }
 
 /** Un lugar de carga o de descarga: empresa que carga/descarga (opcional) y dirección. */
-export interface Stop { party: string | null; address: string; party_id?: string | null; site_id?: string | null; pallets?: number | null; references?: string[]; seals?: string[]; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null; nif?: string | null; time?: string | null }   // nif: lo pone el servidor desde la agenda (nunca viene del formulario)
+/** Ubicación del lugar tecleada al crear el transporte. Es transitoria: se guarda en el lugar de la agenda y NO se conserva en el transporte. */
+export interface StopLocation { map_url?: unknown; lat?: unknown; lon?: unknown; notes?: unknown }
+export interface Stop { party: string | null; address: string; party_id?: string | null; site_id?: string | null; pallets?: number | null; references?: string[]; seals?: string[]; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null; nif?: string | null; time?: string | null; location?: StopLocation }   // nif: lo pone el servidor desde la agenda (nunca viene del formulario)
 const MAX_STOPS = 10;
 
 /** Acepta una lista de lugares o, por compatibilidad, un único texto. Uno o varios (hasta 10). */
@@ -89,8 +91,20 @@ export function stops(v: unknown, field: string, fallback: unknown): Stop[] {
     }
     let time: string | null = null;                         // hora prevista de carga/descarga en ese lugar (HH:MM, opcional)
     if (o.time !== undefined && o.time !== null && o.time !== '') { if (typeof o.time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(o.time)) throw bad('time'); time = o.time; }
+    let location: StopLocation | undefined;                 // ubicación en el mapa e indicaciones para el conductor (opcionales)
+    if (o.location !== undefined && o.location !== null) {
+      if (typeof o.location !== 'object' || Array.isArray(o.location)) throw bad('location');
+      const l = o.location as Record<string, unknown>, one = (v: unknown, max: number): string | number | null => {
+        if (v === undefined || v === null || v === '') return null;
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        if (typeof v !== 'string' || v.length > max) throw bad('location');
+        return v.trim() || null;
+      };
+      const loc = { map_url: one(l.map_url, 600), lat: one(l.lat, 20), lon: one(l.lon, 20), notes: one(l.notes, 500) };
+      if (Object.values(loc).some((x) => x !== null)) location = loc;
+    }
     return { party: optText(o.party, field, 120), address: text(o.address, field, 3, 200), party_id: id(o.party_id), site_id: id(o.site_id), pallets, time,
-      references: shortList(o.references, field, 10, 40), seals: shortList(o.seals, field, 10, 30), ...addrParts(o, field) };
+      references: shortList(o.references, field, 10, 40), seals: shortList(o.seals, field, 10, 30), ...addrParts(o, field), ...(location ? { location } : {}) };
   });
 }
 

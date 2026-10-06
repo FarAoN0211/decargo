@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import { appendAudit } from '../common/audit';
 import { Actor, ApiError, actorStr } from '../identity/service';
 import { checkTaxId, normTaxId } from './taxid';
-import { addrParts, UUID_RE, bad, optMultiline, optText, text, type Stop } from './validate';
+import { addrParts, UUID_RE, bad, optMultiline, optText, text, type Stop, type StopLocation } from './validate';
 import { fullAddress, sameStreet } from './address';
 
 /** Texto en minúsculas, sin acentos ni signos, para buscar sin importar tildes ni mayúsculas. */
@@ -186,7 +186,7 @@ export async function updateSite(pool: Pool, actor: Actor, id: string, b: Record
 }
 
 // ----------------------------------------------------------------------------- registro automático desde los transportes
-interface Reg { parties: number; sites: number }
+interface Reg { parties: number; sites: number; located: number }
 
 type PartyIn = { name: string; nif?: string | null; transport_authorization?: string | null; address?: string | null; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null };
 async function upsertParty(c: PoolClient, actor: Actor, co: string, p: PartyIn, reg: Reg): Promise<string> {
@@ -203,6 +203,26 @@ async function upsertParty(c: PoolClient, actor: Actor, co: string, p: PartyIn, 
   reg.parties++;
   await appendAudit(c, { company_id: co, at: new Date(), actor: actorStr(actor), action: 'PARTY_CREATED', entity: 'party', entity_id: row.id, before: null, after: { name: p.name, nif: nif ?? '', origin: 'transporte' }, reason: null });
   return row.id;
+}
+
+/**
+ * Ubicación (enlace de mapa o coordenadas) e indicaciones tecleadas en un lugar del transporte → se guardan en el lugar de la agenda.
+ * Lo que ya estaba en la agenda y no se ha tocado no cambia; si el formulario trae otro valor, es que la oficina lo ha corregido a propósito.
+ * Nunca se borra nada: un campo vacío del formulario deja el de la agenda como está.
+ */
+async function applyLocation(c: PoolClient, actor: Actor, co: string, siteId: string, loc: StopLocation, reg: Reg): Promise<void> {
+  const f = siteFields({ map_url: loc.map_url, lat: loc.lat, lon: loc.lon, notes: loc.notes }, true);   // valida: https de mapas conocidos, coordenadas, longitud
+  const cur = (await c.query('SELECT lat::float8 AS lat, lon::float8 AS lon, map_url, notes FROM party_site WHERE id = $1', [siteId])).rows[0];
+  if (!cur) return;
+  const set: Record<string, unknown> = {};
+  if (f.lat !== null && (f.lat !== cur.lat || f.lon !== cur.lon)) { set.lat = f.lat; set.lon = f.lon; }
+  if (f.map_url !== null && f.map_url !== cur.map_url) set.map_url = f.map_url;
+  if (f.notes !== null && f.notes !== cur.notes) set.notes = f.notes;
+  const cols = Object.keys(set);
+  if (!cols.length) return;
+  await c.query(`UPDATE party_site SET ${cols.map((k, i) => `${k} = $${i + 3}`).join(', ')}, updated_at = now(), updated_by = $2 WHERE id = $1`, [siteId, actorStr(actor), ...cols.map((k) => set[k])]);
+  reg.located++;
+  await appendAudit(c, { company_id: co, at: new Date(), actor: actorStr(actor), action: 'PARTY_SITE_UPDATED', entity: 'party_site', entity_id: siteId, before: null, after: { fields: cols.join(','), origin: 'transporte' }, reason: null });
 }
 
 async function ensureSite(c: PoolClient, actor: Actor, co: string, partyId: string, st: Stop, kind: 'CARGA' | 'DESCARGA', reg: Reg): Promise<string> {
@@ -226,11 +246,12 @@ async function ensureSite(c: PoolClient, actor: Actor, co: string, partyId: stri
 export async function registerForTransport(c: PoolClient, actor: Actor, co: string, d: {
   shipper: PartyIn & { nif: string }; carrier?: PartyIn | null; origins: Stop[]; destinations: Stop[];
 }): Promise<Reg> {
-  const reg: Reg = { parties: 0, sites: 0 };
+  const reg: Reg = { parties: 0, sites: 0, located: 0 };
   await upsertParty(c, actor, co, d.shipper, reg);
   if (d.carrier) await upsertParty(c, actor, co, d.carrier, reg);
   for (const [list, kind] of [[d.origins, 'CARGA'], [d.destinations, 'DESCARGA']] as const) {
     for (const st of list) {
+      const loc = st.location; delete st.location;                 // la ubicación va al lugar de la agenda, no al transporte
       if (st.site_id) {                                             // elegido de la agenda: se comprueba que existe
         const row = (await c.query('SELECT s.id, s.party_id, s.address, s.postal_code, s.city, s.province, s.country, p.nif AS p_nif, p.address AS p_address, p.postal_code AS p_postal_code, p.city AS p_city, p.province AS p_province, p.country AS p_country FROM party_site s JOIN party p ON p.id = s.party_id WHERE s.id = $1 AND p.company_id = $2', [st.site_id, co])).rows[0];
         if (!row) throw bad('site_id');
@@ -240,6 +261,7 @@ export async function registerForTransport(c: PoolClient, actor: Actor, co: stri
         // lo que se complete a mano en el transporte se guarda en el lugar de la agenda (solo si allí faltaba: nunca pisa)
         if ((!s.postal_code && st.postal_code) || (!s.city && st.city) || (!s.province && st.province) || (!s.country && st.country)) await c.query('UPDATE party_site SET postal_code = COALESCE(postal_code, $2), city = COALESCE(city, $3), province = COALESCE(province, $4), country = COALESCE(country, $5), updated_at = now(), updated_by = $6 WHERE id = $1', [s.id, st.postal_code ?? null, st.city ?? null, st.province ?? null, st.country ?? null, actorStr(actor)]);
         await c.query('UPDATE party SET use_count = use_count + 1, last_used_at = now() WHERE id = $1', [s.party_id]);
+        if (loc) await applyLocation(c, actor, co, st.site_id, loc, reg);
         continue;
       }
       if (st.party_id) {
@@ -249,8 +271,10 @@ export async function registerForTransport(c: PoolClient, actor: Actor, co: stri
         if (sameStreet(st.address, p.address)) { st.postal_code = st.postal_code ?? p.postal_code; st.city = st.city ?? p.city; st.province = st.province ?? p.province; st.country = st.country ?? p.country; }
         await c.query('UPDATE party SET use_count = use_count + 1, last_used_at = now() WHERE id = $1', [p.id]);
       } else if (st.party) { st.party_id = await upsertParty(c, actor, co, { name: st.party, address: null }, reg); st.nif = (await c.query('SELECT nif FROM party WHERE id = $1', [st.party_id])).rows[0]?.nif ?? null; }
+      else if (loc) throw new ApiError(400, 'ubicacion_requiere_empresa', { field: kind === 'CARGA' ? 'origins' : 'destinations' });   // sin empresa no hay dónde guardarla
       else continue;                                               // solo dirección, sin empresa: no se registra
       st.site_id = await ensureSite(c, actor, co, st.party_id as string, st, kind, reg);
+      if (loc) await applyLocation(c, actor, co, st.site_id, loc, reg);
     }
   }
   return reg;

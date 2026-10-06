@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import PartyPicker from '../../components/PartyPicker.vue';
+import StopLocation from '../../components/StopLocation.vue';
 import { api, auth } from '../../api';
 import { messageFor } from '../../errors';
 import { KIND, completeAddress, provinceFromPostal } from '../../format';
@@ -15,13 +16,13 @@ const f = reactive({
   driver_id: '', tractor_id: '', trailer_id: '', generate_deca: true,
   otherCarrier: false, carrier_name: '', carrier_nif: '', carrier_address: '', carrier_postal_code: '', carrier_city: '', carrier_province: '', carrier_country: '', shipper_postal_code: '', shipper_city: '', shipper_province: '', shipper_country: '', packages: '', units: '', packaging: '', adr: false, adr_detail: '', carrier_authorization: '', load_reference: '', temperature: '', price_eur: ''
 });
-interface StopForm { party: string; address: string; postal_code: string; city: string; province: string; country: string; party_id: string; site_id: string; sites: any[]; pallets: string; refs: string; seals: string; time: string }
-const blankStop = (): StopForm => ({ party: '', address: '', postal_code: '', city: '', province: '', country: '', party_id: '', site_id: '', sites: [], pallets: '', refs: '', seals: '', time: '' });
+interface StopForm { party: string; address: string; postal_code: string; city: string; province: string; country: string; party_id: string; site_id: string; sites: any[]; pallets: string; refs: string; seals: string; time: string; map_url: string; lat: string; lon: string; notes: string }
+const blankStop = (): StopForm => ({ party: '', address: '', postal_code: '', city: '', province: '', country: '', party_id: '', site_id: '', sites: [], pallets: '', refs: '', seals: '', time: '', map_url: '', lat: '', lon: '', notes: '' });
 const stopsO = reactive<StopForm[]>([blankStop()]);
 const stopsD = reactive<StopForm[]>([blankStop()]);
 const addStop = (l: StopForm[]): void => { if (l.length < 10) l.push(blankStop()); };
 const dropStop = (l: StopForm[], i: number): void => { if (l.length > 1) l.splice(i, 1); };
-const clean = (l: StopForm[]): Record<string, string>[] => l.map((x) => ({ party: x.party.trim(), address: x.address.trim(), ...(x.postal_code.trim() ? { postal_code: x.postal_code.trim() } : {}), ...(x.city.trim() ? { city: x.city.trim() } : {}), ...(x.province.trim() ? { province: x.province.trim() } : {}), ...(x.country.trim() ? { country: x.country.trim() } : {}), ...(x.party_id ? { party_id: x.party_id } : {}), ...(x.site_id ? { site_id: x.site_id } : {}), ...(x.pallets !== '' ? { pallets: x.pallets } : {}), ...(x.refs.trim() ? { references: x.refs } : {}), ...(x.seals.trim() ? { seals: x.seals } : {}), ...(x.time ? { time: x.time } : {}) }));
+const clean = (l: StopForm[]): Record<string, unknown>[] => l.map((x) => ({ party: x.party.trim(), address: x.address.trim(), ...(x.postal_code.trim() ? { postal_code: x.postal_code.trim() } : {}), ...(x.city.trim() ? { city: x.city.trim() } : {}), ...(x.province.trim() ? { province: x.province.trim() } : {}), ...(x.country.trim() ? { country: x.country.trim() } : {}), ...(x.party_id ? { party_id: x.party_id } : {}), ...(x.site_id ? { site_id: x.site_id } : {}), ...(x.pallets !== '' ? { pallets: x.pallets } : {}), ...(x.refs.trim() ? { references: x.refs } : {}), ...(x.seals.trim() ? { seals: x.seals } : {}), ...(x.time ? { time: x.time } : {}), ...(x.map_url.trim() || x.lat.trim() || x.lon.trim() || x.notes.trim() ? { location: { map_url: x.map_url.trim(), lat: x.lat.trim(), lon: x.lon.trim(), notes: x.notes.trim() } } : {}) }));
 const sumPallets = (l: StopForm[]): number | null => (l.some((x) => x.pallets !== '') ? l.reduce((a, x) => a + (Number(x.pallets) || 0), 0) : null);
 const palLabel = (n: number): string => `${n} ${n === 1 ? 'palet' : 'palets'}`;
 const totO = computed(() => sumPallets(stopsO)), totD = computed(() => sumPallets(stopsD));
@@ -33,14 +34,22 @@ const onUnits = (): void => { unitsManual = String(f.units).trim() !== ''; if (!
 const PACKAGING = ['Palets', 'Europalet', 'Europalet no retornable', 'Palet americano', 'Medio palet', 'Cajas', 'Bultos', 'Big bag', 'Contenedor IBC', 'Granel'];
 /** Se elige una empresa de la agenda: se rellena su nombre y, si solo tiene un lugar, también su dirección. */
 function pickStop(s: StopForm, p: any): void {
-  s.party = p.name; s.party_id = p.id; s.sites = (p.sites ?? []).filter((x: any) => x.active !== false); s.site_id = ''; s.address = ''; s.postal_code = ''; s.city = ''; s.province = ''; s.country = '';
+  s.party = p.name; s.party_id = p.id; s.sites = (p.sites ?? []).filter((x: any) => x.active !== false); s.site_id = ''; s.address = ''; s.postal_code = ''; s.city = ''; s.province = ''; s.country = ''; s.map_url = ''; s.lat = ''; s.lon = ''; s.notes = '';
   if (s.sites.length === 1) pickSite(s, s.sites[0].id);
 }
-function pickSite(s: StopForm, id: string): void { const x = s.sites.find((y) => y.id === id); if (x) { s.site_id = x.id; Object.assign(s, completeAddress({ address: x.address ?? '', postal_code: x.postal_code ?? '', city: x.city ?? '', province: x.province ?? '', country: x.country ?? '' })); } }
+function pickSite(s: StopForm, id: string): void {
+  const x = s.sites.find((y) => y.id === id);
+  if (!x) return;
+  s.site_id = x.id;
+  Object.assign(s, completeAddress({ address: x.address ?? '', postal_code: x.postal_code ?? '', city: x.city ?? '', province: x.province ?? '', country: x.country ?? '' }));
+  // la ubicación guardada del lugar sale ya rellena (enlace, coordenadas e indicaciones)
+  s.map_url = x.map_url ?? ''; s.lat = x.lat != null ? String(x.lat) : ''; s.lon = x.lon != null ? String(x.lon) : ''; s.notes = x.notes ?? '';
+}
 const postalStop = (s: StopForm): void => { if (!s.province) s.province = provinceFromPostal(s.postal_code); };
 const postalShipper = (): void => { if (!f.shipper_province) f.shipper_province = provinceFromPostal(f.shipper_postal_code); };
 const postalCarrier = (): void => { if (!f.carrier_province) f.carrier_province = provinceFromPostal(f.carrier_postal_code); };
-const editAddress = (s: StopForm): void => { s.site_id = ''; };   // si se cambia la dirección a mano, deja de estar enlazada al lugar guardado
+/** Si se cambia la dirección a mano, deja de estar enlazada al lugar guardado: su ubicación ya no corresponde y se vacía. */
+const editAddress = (s: StopForm): void => { if (s.site_id) { s.site_id = ''; s.map_url = ''; s.lat = ''; s.lon = ''; s.notes = ''; } };
 function pickShipper(p: any): void { f.shipper_name = p.name; f.shipper_nif = p.nif ?? ''; const a = completeAddress({ address: p.address ?? '', postal_code: p.postal_code ?? '', city: p.city ?? '', province: p.province ?? '', country: p.country ?? '' }); f.shipper_address = a.address; f.shipper_postal_code = a.postal_code; f.shipper_city = a.city; f.shipper_province = a.province; f.shipper_country = a.country; }
 function pickCarrier(p: any): void { f.otherCarrier = true; f.carrier_name = p.name; f.carrier_nif = p.nif ?? ''; f.carrier_authorization = p.transport_authorization ?? ''; const a = completeAddress({ address: p.address ?? '', postal_code: p.postal_code ?? '', city: p.city ?? '', province: p.province ?? '', country: p.country ?? '' }); f.carrier_address = a.address; f.carrier_postal_code = a.postal_code; f.carrier_city = a.city; f.carrier_province = a.province; f.carrier_country = a.country; }
 // Aviso no bloqueante sobre el NIF tecleado (comprobación sin conexión de la letra o el dígito de control).
@@ -87,8 +96,9 @@ async function submit(): Promise<void> {
       ...(f.aec_ref ? { aec_ref: f.aec_ref } : {}), ...(f.remarks ? { remarks: f.remarks } : {}),
       ...(f.driver_id ? { driver_id: f.driver_id } : {}), ...(f.tractor_id ? { tractor_id: f.tractor_id } : {}), ...(f.trailer_id ? { trailer_id: f.trailer_id } : {})
     };
-    const r = await api<{ id: string; registered?: { parties: number; sites: number } }>('/transports', { method: 'POST', body });
-    await router.push({ path: `/oficina/transportes/${r.id}`, query: r.registered && (r.registered.parties || r.registered.sites) ? { agenda: `${r.registered.parties},${r.registered.sites}` } : {} });
+    const r = await api<{ id: string; registered?: { parties: number; sites: number; located?: number } }>('/transports', { method: 'POST', body });
+    const g = r.registered;
+    await router.push({ path: `/oficina/transportes/${r.id}`, query: g && (g.parties || g.sites || g.located) ? { agenda: `${g.parties},${g.sites},${g.located ?? 0}` } : {} });
   } catch (e) { error.value = messageFor(e); window.scrollTo({ top: 0, behavior: 'smooth' }); } finally { busy.value = false; }
 }
 </script>
@@ -131,7 +141,7 @@ async function submit(): Promise<void> {
           <label>Referencia(s) de carga<span class="hint small"> (separadas por comas)</span><input v-model="s.refs" maxlength="300" /></label>
           <label>Nº de precinto(s)<span class="hint small"> (separados por comas)</span><input v-model="s.seals" maxlength="300" /></label>
         </div>
-        <p v-if="s.site_id" class="muted small">Lugar de la agenda{{ s.sites.find((x) => x.id === s.site_id)?.maps_url ? ' (con ubicación: el conductor verá «Cómo llegar»)' : ' (aún sin ubicación en el mapa)' }}</p>
+        <StopLocation :stop="s" what="carga" />
         <button v-if="stopsO.length > 1" class="btn btn-sm" type="button" @click="dropStop(stopsO, i)">Quitar este lugar</button>
       </div>
       <button v-if="stopsO.length < 10" class="btn btn-sm" type="button" @click="addStop(stopsO)">+ Añadir otro lugar de carga</button>
@@ -149,7 +159,7 @@ async function submit(): Promise<void> {
           <label>Referencia(s) de descarga<span class="hint small"> (separadas por comas)</span><input v-model="s.refs" maxlength="300" /></label>
           <label>Nº de precinto(s)<span class="hint small"> (separados por comas)</span><input v-model="s.seals" maxlength="300" /></label>
         </div>
-        <p v-if="s.site_id" class="muted small">Lugar de la agenda{{ s.sites.find((x) => x.id === s.site_id)?.maps_url ? ' (con ubicación: el conductor verá «Cómo llegar»)' : ' (aún sin ubicación en el mapa)' }}</p>
+        <StopLocation :stop="s" what="descarga" />
         <button v-if="stopsD.length > 1" class="btn btn-sm" type="button" @click="dropStop(stopsD, i)">Quitar este lugar</button>
       </div>
       <button v-if="stopsD.length < 10" class="btn btn-sm" type="button" @click="addStop(stopsD)">+ Añadir otro lugar de descarga</button>
