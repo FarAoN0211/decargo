@@ -4,6 +4,7 @@ import Modal from '../../components/Modal.vue';
 import { api, auth } from '../../api';
 import { messageFor } from '../../errors';
 import { fullAddress } from '../../format';
+import { useFit } from '../../fit';
 
 /** Agenda de empresas: razón social, NIF, domicilio y varios lugares por empresa, cada uno con su ubicación para compartir con los conductores. */
 const canWrite = computed(() => auth.user?.role === 'admin' || auth.user?.role === 'oficina');
@@ -67,31 +68,38 @@ async function share(s: any): Promise<void> {
     else { await navigator.clipboard.writeText(text); copied.value = s.id; setTimeout(() => { copied.value = ''; }, 1600); }
   } catch { /* cancelado */ }
 }
+useFit();
 onMounted(load);
 </script>
 <template>
-  <div class="page-title"><h1>Empresas</h1><button v-if="canWrite" class="btn btn-accent" @click="newParty">Nueva empresa</button></div>
-  <p class="muted">Tu agenda de cargadores, destinatarios y transportistas. Las empresas que escribas al crear un transporte se guardan aquí solas. Cada empresa puede tener varios lugares de carga o descarga con su ubicación, que verá el conductor.</p>
+  <div class="page-title">
+    <div><h1>Empresas</h1><p class="pg-sub">Tu agenda de cargadores, destinatarios y transportistas. Las empresas que escribas al crear un transporte se guardan aquí solas. Cada empresa puede tener varios lugares de carga o descarga con su ubicación, que verá el conductor.</p></div>
+    <div class="pg-actions"><button v-if="canWrite" class="btn btn-accent" @click="newParty">Nueva empresa</button></div>
+  </div>
+  <div class="toolbar">
+    <label class="search"><input v-model="q" type="search" placeholder="Buscar por nombre o NIF…" aria-label="Buscar empresas" autocomplete="off" @input="search" /></label>
+    <label class="ui-check"><input v-model="showInactive" type="checkbox" @change="load" /> Ver archivadas</label>
+  </div>
+  <div class="fit">
   <p v-if="error && !pOpen && !sOpen" class="alert alert-err">{{ error }}</p>
   <p v-if="ok" class="alert alert-ok">{{ ok }}</p>
-  <div class="row"><input v-model="q" type="search" placeholder="Buscar por nombre o NIF…" @input="search" autocomplete="off" /><label class="check small"><input v-model="showInactive" type="checkbox" @change="load" /> Ver archivadas</label></div>
   <p v-if="loading" class="muted">Cargando…</p>
-  <p v-else-if="!rows.length" class="muted">{{ q ? 'No hay empresas con ese nombre.' : 'Todavía no hay empresas. Se irán guardando al crear transportes.' }}</p>
-  <div v-else class="table-wrap"><table>
+  <div v-else-if="!rows.length" class="ui-sec"><div class="empty"><b>{{ q ? 'No hay empresas con ese nombre' : 'Todavía no hay empresas' }}</b>{{ q ? 'Prueba con otro nombre o NIF.' : 'Se irán guardando solas al crear transportes.' }}</div></div>
+  <div v-else class="ui-sec flush"><table>
     <thead><tr><th>Empresa</th><th>NIF</th><th>Domicilio</th><th>Lugares</th><th></th></tr></thead>
     <tbody><template v-for="p in rows" :key="p.id">
       <tr :class="{ archived: !p.active }">
         <td><b>{{ p.name }}</b></td>
         <td class="mono">{{ p.nif ?? '—' }}<span v-if="p.nif_check?.valid === false" class="badge b-pend exp-badge" title="La letra o el dígito de control no cuadran">revisar</span></td>
         <td class="small">{{ fullAddress(p) || '—' }}</td><td>{{ p.sites || '—' }}</td>
-        <td class="right nowrap"><button class="btn btn-sm" @click="expand(p)">{{ open?.id === p.id ? 'Cerrar' : 'Lugares' }}</button><button v-if="canWrite" class="btn btn-sm" @click="editParty(p)">Modificar</button></td>
+        <td class="actions"><button class="btn btn-sm" @click="expand(p)">{{ open?.id === p.id ? 'Cerrar' : 'Lugares' }}</button><button v-if="canWrite" class="btn btn-sm" @click="editParty(p)">Modificar</button></td>
       </tr>
-      <tr v-if="open?.id === p.id"><td colspan="5">
+      <tr v-if="open?.id === p.id" class="sub-row"><td colspan="5">
         <div class="stack">
           <p v-if="open.notes" class="muted small">{{ open.notes }}</p>
           <div class="row spread"><h3 class="sub">Lugares de carga y descarga</h3><span class="row"><button v-if="canWrite" class="btn btn-sm" @click="setActive(open, !open.active)">{{ open.active ? 'Archivar empresa' : 'Recuperar empresa' }}</button><button v-if="canWrite" class="btn btn-sm btn-accent" @click="newSite(open)">Añadir lugar</button></span></div>
           <p v-if="!open.sites.length" class="muted small">Sin lugares guardados todavía.</p>
-          <div v-for="s in open.sites" :key="s.id" :class="['site', { archived: !s.active }]">
+          <div class="sites-grid"><div v-for="s in open.sites" :key="s.id" :class="['site', { archived: !s.active }]">
             <div class="row spread"><b>{{ s.label || fullAddress(s) }}</b><span class="badge b-off">{{ KIND[s.kind] }}</span></div>
             <div v-if="s.label" class="small">{{ fullAddress(s) }}</div>
             <div v-if="s.notes" class="muted small">{{ s.notes }}</div>
@@ -101,8 +109,10 @@ onMounted(load);
               <template v-if="canWrite"><button class="btn btn-sm" @click="editSite(s)">Modificar</button><button class="btn btn-sm" @click="archiveSite(s, !s.active)">{{ s.active ? 'Archivar' : 'Recuperar' }}</button></template>
             </div>
           </div>
-        </div>
+        </div></div>
       </td></tr></template></tbody></table></div>
+  </div>
+
 
   <Modal v-if="pOpen" :title="pform.id ? 'Modificar empresa' : 'Nueva empresa'" @close="pOpen = false">
     <form class="stack" @submit.prevent="saveParty">

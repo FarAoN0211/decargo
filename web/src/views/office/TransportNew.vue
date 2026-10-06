@@ -6,6 +6,8 @@ import StopLocation from '../../components/StopLocation.vue';
 import { api, auth } from '../../api';
 import { messageFor } from '../../errors';
 import { KIND, completeAddress, provinceFromPostal } from '../../format';
+import { useFit } from '../../fit';
+import { useSections } from '../../sections';
 
 const router = useRouter();
 const canWrite = computed(() => auth.user?.role === 'admin' || auth.user?.role === 'oficina');
@@ -84,6 +86,12 @@ onMounted(async () => {
   } catch (e) { error.value = messageFor(e); }
 });
 
+// Menú de secciones y altura del panel (el título, el menú y la barra de acciones no se mueven; solo se desplaza el formulario).
+const GROUPS = [{ g: 'Secciones', items: [{ id: 'cargador', t: 'Cargador contractual' }, { id: 'transportista', t: 'Transportista efectivo' }, { id: 'ruta', t: 'Ruta y fecha' }, { id: 'mercancia', t: 'Mercancía' }, { id: 'asignacion', t: 'Asignación' }] }];
+const { active, go, start: startSpy } = useSections(GROUPS);
+const { refit } = useFit('.ui-shell', '--ui-h', 320);
+onMounted(() => { refit(); startSpy(); });
+
 async function submit(): Promise<void> {
   busy.value = true; error.value = '';
   try {
@@ -99,35 +107,48 @@ async function submit(): Promise<void> {
     const r = await api<{ id: string; registered?: { parties: number; sites: number; located?: number } }>('/transports', { method: 'POST', body });
     const g = r.registered;
     await router.push({ path: `/oficina/transportes/${r.id}`, query: g && (g.parties || g.sites || g.located) ? { agenda: `${g.parties},${g.sites},${g.located ?? 0}` } : {} });
-  } catch (e) { error.value = messageFor(e); window.scrollTo({ top: 0, behavior: 'smooth' }); } finally { busy.value = false; }
+  } catch (e) { error.value = messageFor(e); document.querySelector('.ui-main')?.scrollTo({ top: 0, behavior: 'smooth' }); } finally { busy.value = false; }
 }
 </script>
 <template>
-  <div class="page-title"><h1>Nuevo transporte</h1><RouterLink class="btn" to="/oficina/transportes">Cancelar</RouterLink></div>
+  <div class="page-title">
+    <div><RouterLink class="pg-back" to="/oficina/transportes">← Transportes</RouterLink><h1>Nuevo transporte</h1><p class="pg-sub">Datos del transporte: quién carga, ruta, mercancía y, si ya se sabe, conductor y vehículo.</p></div>
+  </div>
   <p v-if="!canWrite" class="alert alert-warn">Tu usuario no puede crear transportes.</p>
-  <form v-else @submit.prevent="submit">
+  <form v-else class="ui-form" @submit.prevent="submit">
+   <div class="ui-shell with-bar">
+    <nav class="ui-nav" aria-label="Secciones del transporte">
+      <div class="ui-nav-g">Secciones</div>
+      <a v-for="i in GROUPS[0].items" :key="i.id" :href="`#${i.id}`" :class="{ on: active === i.id }" @click.prevent="go(i.id)">{{ i.t }}</a>
+    </nav>
+    <div class="ui-main">
     <p v-if="error" class="alert alert-err">{{ error }}</p>
 
-    <fieldset>
-      <legend>Cargador contractual</legend>
+    <section id="cargador" class="ui-sec">
+      <header class="ui-head"><div><h2>Cargador contractual</h2><p>Quién contrata el transporte y figura como cargador en el DeCA.</p></div></header>
+      <div class="ui-body">
       <PartyPicker label="Buscar el cargador en la agenda" @pick="pickShipper" />
       <div class="grid2"><label>Nombre o denominación social<input v-model="f.shipper_name" required maxlength="120" /></label><label>NIF<input v-model="f.shipper_nif" required maxlength="16" @input="checkNif('shipper', f.shipper_nif)" /><span v-if="nifHint.shipper" class="hint small"> {{ nifHint.shipper }}</span></label></div>
       <label>Domicilio (calle y número)<input v-model="f.shipper_address" required maxlength="200" /></label>
       <div class="grid4"><label>Código postal<input v-model="f.shipper_postal_code" maxlength="10" inputmode="numeric" @input="postalShipper()" /></label><label>Localidad<input v-model="f.shipper_city" maxlength="80" /></label><label>Provincia<input v-model="f.shipper_province" maxlength="80" /></label><label>País<input v-model="f.shipper_country" maxlength="60" placeholder="España" /></label></div>
-    </fieldset>
+      </div>
+    </section>
 
-    <fieldset>
-      <legend>Transportista efectivo</legend>
+    <section id="transportista" class="ui-sec">
+      <header class="ui-head"><div><h2>Transportista efectivo</h2><p>Por defecto, tu empresa; marca la casilla si lo realiza otra.</p></div></header>
+      <div class="ui-body">
       <p v-if="company && !f.otherCarrier" class="muted">{{ company.name }} · {{ company.nif }} <span class="small">(tu empresa)</span></p>
       <label class="check"><input v-model="f.otherCarrier" type="checkbox" /> El transportista efectivo es otra empresa</label>
       <PartyPicker v-if="f.otherCarrier" label="Buscar el transportista en la agenda" @pick="pickCarrier" />
       <div v-if="f.otherCarrier" class="grid2"><label>Nombre o denominación social<input v-model="f.carrier_name" required maxlength="120" /></label><label>NIF<input v-model="f.carrier_nif" required maxlength="16" @input="checkNif('carrier', f.carrier_nif)" /><span v-if="nifHint.carrier" class="hint small"> {{ nifHint.carrier }}</span></label></div>
       <div v-if="f.otherCarrier" class="grid2"><label>Domicilio del transportista (calle y número; opcional)<input v-model="f.carrier_address" maxlength="200" /></label><label>Nº de autorización de transporte<span class="hint small"> (opcional)</span><input v-model="f.carrier_authorization" maxlength="30" /></label></div>
       <div v-if="f.otherCarrier" class="grid4"><label>Código postal<input v-model="f.carrier_postal_code" maxlength="10" inputmode="numeric" @input="postalCarrier()" /></label><label>Localidad<input v-model="f.carrier_city" maxlength="80" /></label><label>Provincia<input v-model="f.carrier_province" maxlength="80" /></label><label>País<input v-model="f.carrier_country" maxlength="60" placeholder="España" /></label></div>
-    </fieldset>
+      </div>
+    </section>
 
-    <fieldset>
-      <legend>Ruta y fecha</legend>
+    <section id="ruta" class="ui-sec">
+      <header class="ui-head"><div><h2>Ruta y fecha</h2><p>Lugares de carga y descarga, con su empresa, hora, palets y ubicación.</p></div></header>
+      <div class="ui-body">
       <h3 class="sub">Carga (origen)</h3>
       <p class="muted small">Uno o varios lugares de recogida. Quien carga no tiene por qué ser quien descarga: indica la empresa de cada lugar si la conoces.</p>
       <div v-for="(s, i) in stopsO" :key="'o' + i" class="stop">
@@ -165,10 +186,12 @@ async function submit(): Promise<void> {
       <button v-if="stopsD.length < 10" class="btn btn-sm" type="button" @click="addStop(stopsD)">+ Añadir otro lugar de descarga</button>
       <p v-if="totD !== null" class="small"><b>Total descargado: {{ palLabel(totD) }}</b></p>
       <label>Fecha de realización del transporte<input v-model="f.transport_date" type="date" required /></label>
-    </fieldset>
+      </div>
+    </section>
 
-    <fieldset>
-      <legend>Mercancía</legend>
+    <section id="mercancia" class="ui-sec">
+      <header class="ui-head"><div><h2>Mercancía</h2><p>Naturaleza, peso, unidades y otros datos del DeCA.</p></div></header>
+      <div class="ui-body">
       <label>Naturaleza de la mercancía<input v-model="f.cargo" required maxlength="200" /></label>
       <div class="radio">
         <label><input v-model="f.weightMode" type="radio" value="kg" /> Peso en kg</label>
@@ -186,10 +209,12 @@ async function submit(): Promise<void> {
       <label>Precio del transporte (€)<span class="hint"> (opcional; dato no obligatorio)</span><input v-model="f.price_eur" inputmode="decimal" placeholder="1250,00" /></label>
       <label>Autorización especial de circulación<span class="hint"> (solo si el vehículo circula amparado por una)</span><input v-model="f.aec_ref" maxlength="120" /></label>
       <label>Observaciones, reservas u otras indicaciones<span class="hint"> (opcional)</span><textarea v-model="f.remarks" maxlength="1000"></textarea></label>
-    </fieldset>
+      </div>
+    </section>
 
-    <fieldset>
-      <legend>Asignación</legend>
+    <section id="asignacion" class="ui-sec">
+      <header class="ui-head"><div><h2>Asignación</h2><p>Conductor y vehículos (se pueden asignar después).</p></div></header>
+      <div class="ui-body">
       <div class="grid3">
         <label>Conductor
           <select v-model="f.driver_id"><option value="">Sin asignar todavía</option><option v-for="d in drivers" :key="d.id" :value="d.id">{{ d.full_name }} ({{ d.username }})</option></select>
@@ -202,16 +227,21 @@ async function submit(): Promise<void> {
         </label>
       </div>
       <p v-if="!vehicles.length" class="alert alert-warn">No hay vehículos activos. Crea alguno en <RouterLink to="/oficina/vehiculos">Vehículos</RouterLink>.</p>
-    </fieldset>
-
-    <div class="card stack">
-      <label class="row"><input v-model="f.generate_deca" type="checkbox" class="check" /> <span>Generar el DeCA al crear el transporte (necesita un vehículo)</span></label>
       <div v-if="docWarn.length" :class="['alert', docWarn.some((x) => x.status === 'CADUCADO') ? 'alert-err' : 'alert-warn']">
         <b>Documentación a revisar</b> (no impide crear el transporte):
         <ul class="plain"><li v-for="x in docWarn" :key="x.source + x.id"><b>{{ x.subject }}</b> · {{ x.what }} — {{ x.status === 'CADUCADO' ? 'caducado' : 'caduca' }} el {{ x.expires_on.split('-').reverse().join('/') }}</li></ul>
       </div>
-      <p v-if="f.generate_deca && !f.tractor_id" class="alert alert-warn">Para generar el DeCA hay que elegir el vehículo: la matrícula es un dato obligatorio del documento.</p>
-      <button class="btn btn-primary" :disabled="busy || (f.generate_deca && !f.tractor_id)">{{ busy ? 'Guardando…' : f.generate_deca ? 'Crear transporte y generar DeCA' : 'Crear transporte' }}</button>
+      </div>
+    </section>
+
     </div>
+   </div>
+   <div class="ui-actionbar">
+    <label class="ui-check" title="Necesita un vehículo: la matrícula es un dato obligatorio del DeCA"><input v-model="f.generate_deca" type="checkbox" /> Generar el DeCA al crear el transporte</label>
+    <span v-if="f.generate_deca && !f.tractor_id" class="ui-bar-note">Falta elegir el vehículo (sección Asignación).</span>
+    <span class="grow"></span>
+    <RouterLink class="btn" to="/oficina/transportes">Cancelar</RouterLink>
+    <button class="btn btn-primary" :disabled="busy || (f.generate_deca && !f.tractor_id)">{{ busy ? 'Guardando…' : f.generate_deca ? 'Crear transporte y generar DeCA' : 'Crear transporte' }}</button>
+   </div>
   </form>
 </template>

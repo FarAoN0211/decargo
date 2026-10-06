@@ -6,7 +6,7 @@ import { messageFor } from '../errors';
 import { fmtDate } from '../format';
 
 /** Documentos con caducidad (conductor, vehículo o empresa) y, en vehículos, tarjetas de combustible y VIA-T. Control interno: la oficina anota la fecha impresa. */
-const props = defineProps<{ subject: 'DRIVER' | 'VEHICLE' | 'COMPANY'; subjectId?: string; vehicleKind?: string; canWrite: boolean }>();
+const props = defineProps<{ subject: 'DRIVER' | 'VEHICLE' | 'COMPANY'; subjectId?: string; vehicleKind?: string; canWrite: boolean; hideTitle?: boolean }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
 
 interface TypeDef { code: string; label: string; hint: string; kinds?: string[]; detailLabel?: string }
@@ -94,7 +94,7 @@ const kindLabel = (c: string): string => cat.value?.assets.find((k) => k.code ==
     <p v-if="error && !dopen && !aopen" class="alert alert-err">{{ error }}</p>
     <p v-if="ok" class="alert alert-ok">{{ ok }}</p>
     <div class="row spread">
-      <h3 class="sub">{{ subject === 'COMPANY' ? 'Documentos de la empresa' : 'Documentos' }}</h3>
+      <h3 v-if="!hideTitle" class="sub">{{ subject === 'COMPANY' ? 'Documentos de la empresa' : 'Documentos' }}</h3><span v-else></span>
       <span class="row"><label class="check small"><input v-model="showArchived" type="checkbox" /> Ver archivados</label>
         <button v-if="canWrite" class="btn btn-sm btn-accent" type="button" @click="newDoc">Añadir documento</button></span>
     </div>

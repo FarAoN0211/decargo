@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import FileViewer from '../../components/FileViewer.vue';
 import { api, apiBlob, auth } from '../../api';
 import { messageFor } from '../../errors';
+import { useFit } from '../../fit';
+import { useSections } from '../../sections';
 
 interface Cfg { deca_show_driver: boolean; logo: { sha256: string; mime: string; width: number; height: number; updated_at: string; updated_by: string } | null; food_transport: boolean; expiry_warn_days: number; company: { name: string; nif: string; address: string; postal_code: string | null; city: string | null; province: string | null; country: string | null; transport_authorization?: string | null } | null; test_mode_source: string; dev_endpoints_available: boolean; public_base_url: string | null; source: 'web' | 'env'; env_public_base_url: string | null; error: string | null; https: boolean; insecure_allowed: boolean;
   test_mode: boolean; dev_endpoints: boolean; push_configured: boolean; fcm: { configured: boolean; project_id: string | null; package: string; updated_at: string | null; updated_by: string | null }; decas_total: number; decas_other_base: number }
@@ -148,59 +150,30 @@ const GROUPS = [
   { g: 'Empresa y documentos', items: [{ id: 'empresa', t: 'Datos de la empresa' }, { id: 'documento', t: 'Documento (DeCA)' }, { id: 'caducidades', t: 'Control de caducidades' }] },
   { g: 'Sistema', items: [{ id: 'direccion', t: 'Dirección pública' }, { id: 'android', t: 'App Android' }, { id: 'pruebas', t: 'Modo de pruebas' }, { id: 'traslado', t: 'Traslado de servidor' }] }
 ];
-const active = ref('empresa');
-let mainEl: HTMLElement | null = null;
-/** El apartado «activo» es el último cuyo borde superior ya ha llegado a la parte alta de la columna de contenido (que es lo que se desplaza). */
-function pick(): void {
-  if (!mainEl) return;
-  const top = mainEl.getBoundingClientRect().top;
-  let cur = GROUPS[0].items[0].id;
-  for (const g of GROUPS) for (const i of g.items) { const el = document.getElementById(i.id); if (el && el.getBoundingClientRect().top - top <= 80) cur = i.id; }
-  active.value = cur;
-}
-function startSpy(): void {
-  mainEl?.removeEventListener('scroll', pick);
-  mainEl = document.querySelector<HTMLElement>('.cfg-main');
-  mainEl?.addEventListener('scroll', pick, { passive: true });
-  pick();
-}
-/** Salta directamente al apartado (sin animación: así siempre queda alineado arriba y a la vista). */
-function go(id: string): void { active.value = id; document.getElementById(id)?.scrollIntoView({ block: 'start' }); }
-// El panel mide lo que queda de ventana bajo el título y las barras: así el título y el menú no se mueven nunca y solo se desplaza el contenido.
-let fitObs: ResizeObserver | undefined;
-function fit(): void {
-  const el = document.querySelector<HTMLElement>('.cfg');
-  if (!el) return;
-  const top = el.getBoundingClientRect().top + window.scrollY;
-  document.documentElement.style.setProperty('--cfg-h', `${Math.max(320, Math.floor(window.innerHeight - top - 14))}px`);
-}
-watch(cfg, async (v) => { if (v) { await nextTick(); fit(); startSpy(); } }, { once: true });
-onMounted(() => {
-  window.addEventListener('resize', fit);
-  fitObs = new ResizeObserver(fit);
-  for (const el of document.querySelectorAll('.topbar, .demo-bar, .page-title')) fitObs.observe(el);
-});
-onBeforeUnmount(() => { mainEl?.removeEventListener('scroll', pick); fitObs?.disconnect(); window.removeEventListener('resize', fit); document.documentElement.style.removeProperty('--cfg-h'); });
+const { active, go, start: startSpy } = useSections(GROUPS);
+// El panel ocupa lo que queda de ventana: el título y el menú no se mueven y solo se desplaza el contenido.
+const { refit } = useFit('.ui-shell', '--ui-h', 320);
+watch(cfg, async (v) => { if (v) { await nextTick(); refit(); startSpy(); } }, { once: true });
 </script>
 <template>
-  <div class="page-title"><h1>Configuración</h1></div>
+  <div class="page-title"><div><h1>Configuración</h1><p class="pg-sub">Datos de la empresa, documento DeCA, dirección pública, app Android y traslado del servidor.</p></div></div>
   <p v-if="!isAdmin" class="alert alert-warn">Solo el administrador puede ver y cambiar la configuración.</p>
   <template v-else>
     <p v-if="error" class="alert alert-err">{{ error }}</p>
-    <div v-if="cfg" class="cfg">
-      <nav class="cfg-nav" aria-label="Apartados de la configuración">
+    <div v-if="cfg" class="ui-shell">
+      <nav class="ui-nav" aria-label="Apartados de la configuración">
         <template v-for="g in GROUPS" :key="g.g">
-          <div class="cfg-nav-g">{{ g.g }}</div>
+          <div class="ui-nav-g">{{ g.g }}</div>
           <a v-for="i in g.items" :key="i.id" :href="`#${i.id}`" :class="{ on: active === i.id }" @click.prevent="go(i.id)">{{ i.t }}</a>
         </template>
       </nav>
 
-      <div class="cfg-main">
+      <div class="ui-main">
         <!-- ============================== Datos de la empresa -->
-        <section id="empresa" class="cfg-sec">
-          <header class="cfg-head"><div><h2>Datos de la empresa</h2><p>Transportista efectivo (apartado b del DeCA) que llevarán por defecto los transportes nuevos. En un transporte concreto se puede indicar otro; los DeCA ya emitidos conservan los suyos.</p></div></header>
+        <section id="empresa" class="ui-sec">
+          <header class="ui-head"><div><h2>Datos de la empresa</h2><p>Transportista efectivo (apartado b del DeCA) que llevarán por defecto los transportes nuevos. En un transporte concreto se puede indicar otro; los DeCA ya emitidos conservan los suyos.</p></div></header>
           <form @submit.prevent="saveCompany">
-            <div class="cfg-body cfg-grid">
+            <div class="ui-body ui-grid">
               <label class="c8">Nombre o denominación social<input v-model="co.name" required maxlength="120" /></label>
               <label class="c4">NIF<input v-model="co.nif" required maxlength="16" /></label>
               <label class="c12">Domicilio (calle y número)<input v-model="co.address" required maxlength="200" /></label>
@@ -210,22 +183,22 @@ onBeforeUnmount(() => { mainEl?.removeEventListener('scroll', pick); fitObs?.dis
               <label class="c2">País<input v-model="co.country" maxlength="60" placeholder="España" /></label>
               <label class="c6">Nº de autorización de transporte<input v-model="co.transport_authorization" maxlength="30" /><span class="hint">Opcional. El de la autorización de transporte público de mercancías (Registro de Empresas y Actividades de Transporte). Sale en el Modelo DECARGO.</span></label>
             </div>
-            <footer class="cfg-foot"><span v-if="coMsg" class="cfg-msg ok">{{ coMsg }}</span><button class="btn btn-primary btn-sm" type="submit">Guardar cambios</button></footer>
+            <footer class="ui-foot"><span v-if="coMsg" class="ui-msg ok">{{ coMsg }}</span><button class="btn btn-primary btn-sm" type="submit">Guardar cambios</button></footer>
           </form>
         </section>
 
         <!-- ============================== Documento (DeCA) -->
-        <section id="documento" class="cfg-sec">
-          <header class="cfg-head"><div><h2>Documento (DeCA)</h2><p>Los DeCA se emiten con el <b>Modelo DECARGO</b>: en fichas y en una sola página, con cabecera con QR, intervinientes, carga y entrega con hora, vehículo y conductor, mercancía y observaciones.</p></div></header>
-          <div class="cfg-rows">
-            <div class="cfg-row">
-              <div class="cfg-row-t"><b>Vista previa del modelo</b><p>Un ejemplo con datos ficticios, o el formulario en blanco para imprimir.</p></div>
-              <div class="cfg-row-c"><button class="btn btn-sm" type="button" @click="showTpl('ejemplo', 'Ejemplo · Modelo DECARGO')">Ver ejemplo</button>
+        <section id="documento" class="ui-sec">
+          <header class="ui-head"><div><h2>Documento (DeCA)</h2><p>Los DeCA se emiten con el <b>Modelo DECARGO</b>: en fichas y en una sola página, con cabecera con QR, intervinientes, carga y entrega con hora, vehículo y conductor, mercancía y observaciones.</p></div></header>
+          <div class="ui-rows">
+            <div class="ui-row">
+              <div class="ui-row-t"><b>Vista previa del modelo</b><p>Un ejemplo con datos ficticios, o el formulario en blanco para imprimir.</p></div>
+              <div class="ui-row-c"><button class="btn btn-sm" type="button" @click="showTpl('ejemplo', 'Ejemplo · Modelo DECARGO')">Ver ejemplo</button>
                 <button class="btn btn-sm" type="button" @click="showTpl('blanco', 'En blanco · Modelo DECARGO')">Formulario en blanco</button></div>
             </div>
-            <div class="cfg-row">
-              <div class="cfg-row-t"><b>Logo de la empresa</b><p>Sale en la cabecera del DeCA, a la izquierda (el QR va a la derecha). PNG, JPEG, WebP o SVG; mejor con fondo transparente o blanco. Solo cambia los DeCA que se emitan a partir de ahora: los ya emitidos, y sus versiones, conservan el logo con el que se emitieron.</p></div>
-              <div class="cfg-row-c logo-ctl">
+            <div class="ui-row">
+              <div class="ui-row-t"><b>Logo de la empresa</b><p>Sale en la cabecera del DeCA, a la izquierda (el QR va a la derecha). PNG, JPEG, WebP o SVG; mejor con fondo transparente o blanco. Solo cambia los DeCA que se emitan a partir de ahora: los ya emitidos, y sus versiones, conservan el logo con el que se emitieron.</p></div>
+              <div class="ui-row-c logo-ctl">
                 <div class="logo-box"><img v-if="logoUrl" :src="logoUrl" alt="Logo de la empresa" /><span v-else class="muted small">Sin logo</span></div>
                 <span class="row">
                   <label class="btn btn-sm" :class="{ disabled: logoBusy }">{{ cfg.logo ? 'Cambiar logo' : 'Subir logo' }}<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" class="hidden" :disabled="logoBusy" @change="uploadLogo" /></label>
@@ -233,36 +206,36 @@ onBeforeUnmount(() => { mainEl?.removeEventListener('scroll', pick); fitObs?.dis
                 </span>
               </div>
             </div>
-            <div v-if="logoMsg" class="cfg-rowmsg"><span class="cfg-msg ok">{{ logoMsg }}</span></div>
-            <div class="cfg-row">
-              <div class="cfg-row-t"><b>Datos del conductor</b><p>El DeCA se descarga con su enlace o QR por quien lo recibe: incluir el DNI y el teléfono del conductor es una decisión de la empresa. Por defecto no se imprimen.</p></div>
-              <div class="cfg-row-c"><label class="cfg-check"><input type="checkbox" :checked="cfg.deca_show_driver" @change="saveTemplate({ show_driver: ($event.target as HTMLInputElement).checked })" /> Imprimir nombre, DNI y teléfono</label></div>
+            <div v-if="logoMsg" class="ui-rowmsg"><span class="ui-msg ok">{{ logoMsg }}</span></div>
+            <div class="ui-row">
+              <div class="ui-row-t"><b>Datos del conductor</b><p>El DeCA se descarga con su enlace o QR por quien lo recibe: incluir el DNI y el teléfono del conductor es una decisión de la empresa. Por defecto no se imprimen.</p></div>
+              <div class="ui-row-c"><label class="ui-check"><input type="checkbox" :checked="cfg.deca_show_driver" @change="saveTemplate({ show_driver: ($event.target as HTMLInputElement).checked })" /> Imprimir nombre, DNI y teléfono</label></div>
             </div>
-            <div v-if="tplMsg" class="cfg-rowmsg"><span class="cfg-msg ok">{{ tplMsg }}</span></div>
+            <div v-if="tplMsg" class="ui-rowmsg"><span class="ui-msg ok">{{ tplMsg }}</span></div>
           </div>
         </section>
 
         <!-- ============================== Control de caducidades -->
-        <section id="caducidades" class="cfg-sec">
-          <header class="cfg-head"><div><h2>Control de documentos y caducidades</h2><p>Documentos de conductores y vehículos (carnet, CAP, tacógrafo, ITV, ATP…) y tarjetas de combustible / VIA-T. Es un control interno: tú anotas la fecha de caducidad de cada documento.</p></div></header>
-          <div class="cfg-rows">
-            <div class="cfg-row">
-              <div class="cfg-row-t"><b>Transporte de alimentos</b><p>Muestra ATP, equipo de frío, carné de manipulador y registro sanitario.</p></div>
-              <div class="cfg-row-c"><label class="cfg-check"><input type="checkbox" :checked="cfg.food_transport" @change="saveDocs(($event.target as HTMLInputElement).checked)" /> La empresa transporta alimentos</label></div>
+        <section id="caducidades" class="ui-sec">
+          <header class="ui-head"><div><h2>Control de documentos y caducidades</h2><p>Documentos de conductores y vehículos (carnet, CAP, tacógrafo, ITV, ATP…) y tarjetas de combustible / VIA-T. Es un control interno: tú anotas la fecha de caducidad de cada documento.</p></div></header>
+          <div class="ui-rows">
+            <div class="ui-row">
+              <div class="ui-row-t"><b>Transporte de alimentos</b><p>Muestra ATP, equipo de frío, carné de manipulador y registro sanitario.</p></div>
+              <div class="ui-row-c"><label class="ui-check"><input type="checkbox" :checked="cfg.food_transport" @change="saveDocs(($event.target as HTMLInputElement).checked)" /> La empresa transporta alimentos</label></div>
             </div>
-            <form class="cfg-row" @submit.prevent="saveDocs()">
-              <div class="cfg-row-t"><b>Aviso de caducidad</b><p>Con cuántos días de antelación una caducidad pasa a «próxima».</p></div>
-              <div class="cfg-row-c"><label class="cfg-inline">Avisar con <input v-model.number="warn" type="number" min="1" max="365" class="narrow" /> días</label><button class="btn btn-sm" type="submit">Guardar</button></div>
+            <form class="ui-row" @submit.prevent="saveDocs()">
+              <div class="ui-row-t"><b>Aviso de caducidad</b><p>Con cuántos días de antelación una caducidad pasa a «próxima».</p></div>
+              <div class="ui-row-c"><label class="ui-inline">Avisar con <input v-model.number="warn" type="number" min="1" max="365" class="narrow" /> días</label><button class="btn btn-sm" type="submit">Guardar</button></div>
             </form>
-            <div v-if="docMsg" class="cfg-rowmsg"><span class="cfg-msg ok">{{ docMsg }}</span></div>
+            <div v-if="docMsg" class="ui-rowmsg"><span class="ui-msg ok">{{ docMsg }}</span></div>
           </div>
         </section>
 
         <!-- ============================== Dirección pública -->
-        <section id="direccion" class="cfg-sec">
-          <header class="cfg-head"><div><h2>Dirección pública de los DeCA</h2><p>Es la dirección que se imprime en el QR de cada DeCA nuevo. Cámbiala aquí cuando cambie el dominio o el servidor: no hace falta tocar ningún fichero.</p></div>
+        <section id="direccion" class="ui-sec">
+          <header class="ui-head"><div><h2>Dirección pública de los DeCA</h2><p>Es la dirección que se imprime en el QR de cada DeCA nuevo. Cámbiala aquí cuando cambie el dominio o el servidor: no hace falta tocar ningún fichero.</p></div>
             <span :class="['badge', cfg.https ? 'b-fin' : 'b-pend']">{{ cfg.https ? 'https ✔' : 'sin https' }}</span></header>
-          <div class="cfg-body stack">
+          <div class="ui-body stack">
             <dl class="kv"><dt>Dirección actual</dt><dd><span class="mono">{{ cfg.public_base_url ?? 'sin configurar' }}</span> <span class="muted small">· {{ cfg.source === 'web' ? 'fijada desde esta pantalla' : 'tomada de la instalación (.env)' }}</span></dd></dl>
             <p v-if="cfg.error" class="alert alert-err">{{ cfg.error }}</p>
             <p v-if="cfg.public_base_url && !cfg.https" class="alert alert-warn">Esta dirección no usa https. La Resolución exige https para el QR del DeCA: solo vale para pruebas.</p>
@@ -273,7 +246,7 @@ onBeforeUnmount(() => { mainEl?.removeEventListener('scroll', pick); fitObs?.dis
               <p class="small">Genera PDF y QR nuevos con los mismos datos. Los anteriores se conservan (no se borran) y sus enlaces siguen funcionando. También se puede hacer DeCA a DeCA desde el detalle de cada transporte.</p>
             </div>
             <p v-if="bulkMsg" class="alert alert-ok">{{ bulkMsg }}</p>
-            <form class="cfg-inline-form" @submit.prevent="save">
+            <form class="ui-inline-form" @submit.prevent="save">
               <label class="grow">Nueva dirección pública<input v-model="url" type="text" inputmode="url" placeholder="https://decargo.tuempresa.com" maxlength="255" autocomplete="off" /></label>
               <button class="btn btn-sm" type="button" :disabled="busy.check || !url" @click="runCheck">{{ busy.check ? 'Comprobando…' : 'Comprobar' }}</button>
               <button class="btn btn-primary btn-sm" type="submit" :disabled="busy.save || !url || url === cfg.public_base_url">{{ busy.save ? 'Guardando…' : 'Guardar' }}</button>
@@ -290,29 +263,29 @@ onBeforeUnmount(() => { mainEl?.removeEventListener('scroll', pick); fitObs?.dis
         </section>
 
         <!-- ============================== App Android -->
-        <section id="android" class="cfg-sec">
-          <header class="cfg-head"><div><h2>App Android para conductores</h2><p>La app es la misma web dentro de una aplicación que puede <b>encender la pantalla</b> y mostrar el aviso aunque el teléfono esté bloqueado.</p></div>
+        <section id="android" class="ui-sec">
+          <header class="ui-head"><div><h2>App Android para conductores</h2><p>La app es la misma web dentro de una aplicación que puede <b>encender la pantalla</b> y mostrar el aviso aunque el teléfono esté bloqueado.</p></div>
             <span :class="['badge', cfg.fcm.configured ? 'b-fin' : 'b-pend']">{{ cfg.fcm.configured ? 'Avisos configurados' : 'Avisos sin configurar' }}</span></header>
-          <div class="cfg-rows">
-            <div class="cfg-row">
-              <div class="cfg-row-t"><b>Descarga</b><p>Desde el teléfono del conductor.</p></div>
-              <div class="cfg-row-c"><a class="mono small" href="/app/decargo.apk">{{ origin }}/app/decargo.apk</a></div>
+          <div class="ui-rows">
+            <div class="ui-row">
+              <div class="ui-row-t"><b>Descarga</b><p>Desde el teléfono del conductor.</p></div>
+              <div class="ui-row-c"><a class="mono small" href="/app/decargo.apk">{{ origin }}/app/decargo.apk</a></div>
             </div>
-            <div class="cfg-row">
-              <div class="cfg-row-t"><b>Avisos (Firebase)</b><p>{{ cfg.fcm.configured ? `Proyecto ${cfg.fcm.project_id}.` : 'Hace falta una sola vez para que lleguen los avisos al móvil.' }}</p></div>
-              <div class="cfg-row-c"><span :class="cfg.fcm.configured ? 'cfg-st ok' : 'cfg-st ko'">{{ cfg.fcm.configured ? '✔ configurados' : '✘ sin configurar' }}</span></div>
+            <div class="ui-row">
+              <div class="ui-row-t"><b>Avisos (Firebase)</b><p>{{ cfg.fcm.configured ? `Proyecto ${cfg.fcm.project_id}.` : 'Hace falta una sola vez para que lleguen los avisos al móvil.' }}</p></div>
+              <div class="ui-row-c"><span :class="cfg.fcm.configured ? 'ui-st ok' : 'ui-st ko'">{{ cfg.fcm.configured ? '✔ configurados' : '✘ sin configurar' }}</span></div>
             </div>
           </div>
-          <details class="cfg-details" :open="!cfg.fcm.configured">
+          <details class="ui-details" :open="!cfg.fcm.configured">
             <summary>{{ cfg.fcm.configured ? 'Cambiar las credenciales de Firebase' : 'Cómo configurar los avisos (una sola vez)' }}</summary>
-            <div class="cfg-body stack">
+            <div class="ui-body stack">
               <ol class="small">
                 <li>Entra en <span class="mono">console.firebase.google.com</span> con la cuenta de Google de la empresa y crea un proyecto (gratuito).</li>
                 <li>Añade una app <b>Android</b> con el nombre de paquete <b class="mono">{{ cfg.fcm.package }}</b> y descarga <b class="mono">google-services.json</b>.</li>
                 <li>Configuración del proyecto → Cuentas de servicio → <b>Generar nueva clave privada</b> (descarga otro JSON).</li>
                 <li>Sube aquí los dos ficheros. Se comprueban con Google antes de guardarse; la clave privada se guarda cifrada.</li>
               </ol>
-              <div class="cfg-grid">
+              <div class="ui-grid">
                 <label class="c6">google-services.json<input type="file" accept="application/json,.json" @change="readJson('gs', $event)" /></label>
                 <label class="c6">Clave de la cuenta de servicio (.json)<input type="file" accept="application/json,.json" @change="readJson('sa', $event)" /></label>
               </div>
@@ -320,31 +293,31 @@ onBeforeUnmount(() => { mainEl?.removeEventListener('scroll', pick); fitObs?.dis
                 <button v-if="cfg.fcm.configured" class="btn btn-sm" type="button" :disabled="fcmBusy" @click="saveFcm(true)">Quitar</button></p>
             </div>
           </details>
-          <div v-if="fcmMsg" class="cfg-rowmsg"><span class="cfg-msg ok">{{ fcmMsg }}</span></div>
+          <div v-if="fcmMsg" class="ui-rowmsg"><span class="ui-msg ok">{{ fcmMsg }}</span></div>
         </section>
 
         <!-- ============================== Modo de pruebas -->
-        <section id="pruebas" class="cfg-sec">
-          <header class="cfg-head"><div><h2>Modo de pruebas y uso con datos reales</h2><p>Antes de empezar a trabajar de verdad: desactiva el modo de pruebas y elimina los datos de ejemplo con <span class="mono">./deca purge-examples</span> en el servidor.</p></div>
+        <section id="pruebas" class="ui-sec">
+          <header class="ui-head"><div><h2>Modo de pruebas y uso con datos reales</h2><p>Antes de empezar a trabajar de verdad: desactiva el modo de pruebas y elimina los datos de ejemplo con <span class="mono">./deca purge-examples</span> en el servidor.</p></div>
             <span :class="['badge', cfg.test_mode ? 'b-pend' : 'b-fin']">{{ cfg.test_mode ? 'Modo de pruebas activo' : 'Uso real' }}</span></header>
-          <ul class="cfg-flags">
-            <li><span :class="['cfg-dot', cfg.https ? 'ok' : 'ko']">{{ cfg.https ? '✔' : '✘' }}</span><div class="cfg-row-t"><b>Dirección pública con https</b></div></li>
-            <li><span :class="['cfg-dot', cfg.test_mode ? 'ko' : 'ok']">{{ cfg.test_mode ? '✘' : '✔' }}</span>
-              <div class="cfg-row-t"><b>Rótulo «DOCUMENTO DE PRUEBA»</b><p>{{ cfg.test_mode ? 'Activo: los PDF nuevos NO son válidos.' : 'Desactivado: los PDF nuevos se emiten como reales.' }}</p></div>
+          <ul class="ui-flags">
+            <li><span :class="['ui-dot', cfg.https ? 'ok' : 'ko']">{{ cfg.https ? '✔' : '✘' }}</span><div class="ui-row-t"><b>Dirección pública con https</b></div></li>
+            <li><span :class="['ui-dot', cfg.test_mode ? 'ko' : 'ok']">{{ cfg.test_mode ? '✘' : '✔' }}</span>
+              <div class="ui-row-t"><b>Rótulo «DOCUMENTO DE PRUEBA»</b><p>{{ cfg.test_mode ? 'Activo: los PDF nuevos NO son válidos.' : 'Desactivado: los PDF nuevos se emiten como reales.' }}</p></div>
               <button class="btn btn-sm" :class="cfg.test_mode ? 'btn-primary' : ''" type="button" :disabled="flagBusy === 'test_mode'" @click="setFlag('test_mode', !cfg.test_mode)">{{ cfg.test_mode ? 'Desactivar modo de pruebas' : 'Volver al modo de pruebas' }}</button></li>
-            <li><span :class="['cfg-dot', cfg.dev_endpoints ? 'ko' : 'ok']">{{ cfg.dev_endpoints ? '✘' : '✔' }}</span>
-              <div class="cfg-row-t"><b>Endpoints de prueba</b><p>{{ cfg.dev_endpoints ? 'Activos (solo para pruebas técnicas).' : 'Desactivados.' }}</p></div>
+            <li><span :class="['ui-dot', cfg.dev_endpoints ? 'ko' : 'ok']">{{ cfg.dev_endpoints ? '✘' : '✔' }}</span>
+              <div class="ui-row-t"><b>Endpoints de prueba</b><p>{{ cfg.dev_endpoints ? 'Activos (solo para pruebas técnicas).' : 'Desactivados.' }}</p></div>
               <button v-if="cfg.dev_endpoints || cfg.dev_endpoints_available" class="btn btn-sm" :class="cfg.dev_endpoints ? 'btn-primary' : ''" type="button" :disabled="flagBusy === 'dev_endpoints'" @click="setFlag('dev_endpoints', !cfg.dev_endpoints)">{{ cfg.dev_endpoints ? 'Desactivar' : 'Activar' }}</button></li>
-            <li><span :class="['cfg-dot', cfg.push_configured ? 'ok' : 'ko']">{{ cfg.push_configured ? '✔' : '✘' }}</span><div class="cfg-row-t"><b>Avisos al móvil (Web Push)</b><p>{{ cfg.push_configured ? 'Configurados.' : 'Sin claves VAPID.' }}</p></div></li>
+            <li><span :class="['ui-dot', cfg.push_configured ? 'ok' : 'ko']">{{ cfg.push_configured ? '✔' : '✘' }}</span><div class="ui-row-t"><b>Avisos al móvil (Web Push)</b><p>{{ cfg.push_configured ? 'Configurados.' : 'Sin claves VAPID.' }}</p></div></li>
           </ul>
         </section>
 
         <!-- ============================== Traslado de servidor -->
-        <section id="traslado" class="cfg-sec">
-          <header class="cfg-head"><div><h2>Trasladar DECARGO a otro servidor</h2><p>Cinco pasos. Los comandos se escriben en una terminal del servidor, dentro de la carpeta de DECARGO.</p></div></header>
-          <ol class="cfg-steps">
+        <section id="traslado" class="ui-sec">
+          <header class="ui-head"><div><h2>Trasladar DECARGO a otro servidor</h2><p>Cinco pasos. Los comandos se escriben en una terminal del servidor, dentro de la carpeta de DECARGO.</p></div></header>
+          <ol class="ui-steps">
             <li v-for="s in steps" :key="s.t">
-              <div class="cfg-step-t"><b>{{ s.t }}</b><p>{{ s.n }}</p>
+              <div class="ui-step-t"><b>{{ s.t }}</b><p>{{ s.n }}</p>
                 <div v-if="s.c" class="cmd"><code class="mono">{{ s.c }}</code><button class="btn btn-sm" type="button" @click="copy(s.c)">{{ copied === s.c ? 'Copiado' : 'Copiar' }}</button></div></div>
             </li>
           </ol>

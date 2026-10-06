@@ -9,7 +9,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey));
 <template>
   <div class="modal-back" @click.self="emit('close')">
     <div :class="['modal', { wide }]" role="dialog" aria-modal="true" :aria-label="title">
-      <div class="row spread"><h2>{{ title }}</h2><button class="btn btn-sm" type="button" @click="emit('close')">Cerrar</button></div>
+      <div class="modal-head"><h2>{{ title }}</h2><button class="btn btn-sm" type="button" aria-label="Cerrar" @click="emit('close')">Cerrar</button></div>
       <slot />
     </div>
   </div>

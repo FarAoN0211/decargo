@@ -7,6 +7,7 @@ import DocsPanel from '../../components/DocsPanel.vue';
 import ProfileForm from '../../components/ProfileForm.vue';
 import { useRoute } from 'vue-router';
 import { DEVICE, fmtDateTime } from '../../format';
+import { useFit } from '../../fit';
 import QRCode from 'qrcode';
 
 const rows = ref<any[]>([]), error = ref(''), ok = ref(''), busy = ref(''), loading = ref(true);
@@ -80,24 +81,43 @@ async function showDevices(id: string, keep = false): Promise<void> {
   try { devices.value = await api(`/devices?user_id=${id}`); } catch (e) { error.value = messageFor(e); }
 }
 const state = (u: any): { t: string; c: string } => !u.active ? { t: 'Inactivo', c: 'b-off' } : u.pending_activation ? { t: 'Pendiente de activar', c: 'b-pend' } : { t: 'Activo', c: 'b-fin' };
+// Buscador y filtro por estado (en pantalla)
+const q = ref(''), filtro = ref('');
+const FILTROS = [{ v: '', t: 'Todos' }, { v: 'activo', t: 'Activos' }, { v: 'pendiente', t: 'Pendientes de activar' }, { v: 'inactivo', t: 'Inactivos' }];
+const kindOf = (u: any): string => (!u.active ? 'inactivo' : u.pending_activation ? 'pendiente' : 'activo');
+const countOf = (v: string): number => (v ? rows.value.filter((u) => kindOf(u) === v).length : rows.value.length);
+const norm = (v: string): string => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const shown = computed(() => { const s = norm(q.value.trim()); return rows.value.filter((u) => (!filtro.value || kindOf(u) === filtro.value) && (!s || norm(`${u.full_name} ${u.username}`).includes(s))); });
+useFit();
 onMounted(() => { void load(); void loadExpiries(); });
 </script>
 <template>
-  <div class="page-title"><h1>Conductores</h1><button v-if="canWrite" class="btn btn-accent" @click="creating = true">Nuevo conductor</button></div>
+  <div class="page-title">
+    <div><h1>Conductores</h1><p class="pg-sub">Altas, fichas, documentación y dispositivos de los conductores.</p></div>
+    <div class="pg-actions"><button v-if="canWrite" class="btn btn-accent" @click="creating = true">Nuevo conductor</button></div>
+  </div>
+  <div class="toolbar">
+    <label class="search"><input v-model="q" type="search" placeholder="Buscar por nombre o usuario…" aria-label="Buscar conductores" autocomplete="off" /></label>
+    <div class="chips" role="group" aria-label="Filtrar por estado">
+      <button v-for="f in FILTROS" :key="f.v" type="button" :class="['chip', { on: filtro === f.v }]" @click="filtro = f.v">{{ f.t }}<span class="n">{{ countOf(f.v) }}</span></button>
+    </div>
+  </div>
+  <div class="fit">
   <p v-if="error" class="alert alert-err">{{ error }}</p>
   <p v-if="ok" class="alert alert-ok">{{ ok }}</p>
   <p v-if="loading" class="muted">Cargando…</p>
-  <p v-else-if="!rows.length" class="muted">Todavía no hay conductores.</p>
-  <div v-else class="table-wrap">
+  <div v-else-if="!rows.length" class="ui-sec"><div class="empty"><b>Todavía no hay conductores</b>{{ canWrite ? 'Crea el primero con «Nuevo conductor».' : '' }}</div></div>
+  <div v-else-if="!shown.length" class="ui-sec"><div class="empty"><b>Ningún conductor coincide</b>Prueba con otro nombre o cambia el filtro.</div></div>
+  <div v-else class="ui-sec flush">
     <table>
       <thead><tr><th>Conductor</th><th>Usuario</th><th>Estado</th><th>Dispositivos pendientes</th><th></th></tr></thead>
       <tbody>
-        <template v-for="u in rows" :key="u.id">
+        <template v-for="u in shown" :key="u.id">
           <tr>
-            <td>{{ u.full_name }}<span v-if="exp[u.id]?.expired" class="badge b-bad exp-badge">{{ exp[u.id].expired }} caducado{{ exp[u.id].expired > 1 ? 's' : '' }}</span><span v-if="exp[u.id]?.soon" class="badge b-pend exp-badge">{{ exp[u.id].soon }} por caducar</span></td><td class="mono">{{ u.username }}</td>
+            <td><b>{{ u.full_name }}</b><span v-if="exp[u.id]?.expired" class="badge b-bad exp-badge">{{ exp[u.id].expired }} caducado{{ exp[u.id].expired > 1 ? 's' : '' }}</span><span v-if="exp[u.id]?.soon" class="badge b-pend exp-badge">{{ exp[u.id].soon }} por caducar</span></td><td class="mono">{{ u.username }}</td>
             <td><span :class="['badge', state(u).c]">{{ state(u).t }}</span></td>
             <td>{{ u.pending_devices || '—' }}</td>
-            <td class="right nowrap">
+            <td class="actions">
               <button class="btn btn-sm" @click="profileFor = u.id">Ficha</button>
               <button class="btn btn-sm" @click="docsOpen = docsOpen === u.id ? '' : u.id">Documentos</button>
               <button class="btn btn-sm" @click="showDevices(u.id)">Dispositivos</button>
@@ -108,8 +128,8 @@ onMounted(() => { void load(); void loadExpiries(); });
               </template>
             </td>
           </tr>
-          <tr v-if="docsOpen === u.id"><td colspan="5"><DocsPanel subject="DRIVER" :subject-id="u.id" :can-write="canWrite" @changed="loadExpiries" /></td></tr>
-          <tr v-if="open === u.id"><td colspan="5">
+          <tr v-if="docsOpen === u.id" class="sub-row"><td colspan="5"><DocsPanel subject="DRIVER" :subject-id="u.id" :can-write="canWrite" @changed="loadExpiries" /></td></tr>
+          <tr v-if="open === u.id" class="sub-row"><td colspan="5">
             <p v-if="!devices.length" class="muted small">Este conductor no tiene dispositivos registrados.</p>
             <table v-else>
               <thead><tr><th>Dispositivo</th><th>Estado</th><th>Avisos</th><th>Registrado</th><th>Último acceso</th><th></th></tr></thead>
@@ -145,6 +165,7 @@ onMounted(() => { void load(); void loadExpiries(); });
         </template>
       </tbody>
     </table>
+  </div>
   </div>
 
   <ProfileForm v-if="profileFor" :user-id="profileFor" :can-write="canWrite" @close="profileFor = ''" @saved="load" />

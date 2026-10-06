@@ -7,6 +7,7 @@ import { useRoute } from 'vue-router';
 import { api, auth } from '../../api';
 import { messageFor } from '../../errors';
 import { KIND, fmtDate, fmtDateTime, fullAddress, kg } from '../../format';
+import { useFit } from '../../fit';
 
 const props = defineProps<{ id: string }>();
 const route = useRoute();
@@ -68,33 +69,49 @@ async function changeVehicle(): Promise<void> {
 const okVer = ref<number | null>(null);
 const reissue = (): Promise<void> => run('reissue', () => api(`/admin/decas/${t.value.deca.id}/reissue`, { method: 'POST', body: { reason: reissueReason.value } }), 'DeCA reemitido con la dirección actual. El anterior se conserva como sustituido.');
 const review = (id: string): Promise<void> => run(`ext-${id}`, () => api(`/external-decas/${id}/review`, { method: 'POST', body: {} }), 'Marcado como revisado (no implica que sea un DeCA válido).');
+useFit();
 onMounted(load);
 </script>
 <template>
   <div class="page-title">
-    <p v-if="agendaNew[0] || agendaNew[1] || agendaNew[2]" class="alert alert-ok">Guardado en tu agenda de empresas: {{ [agendaNew[0] ? `${agendaNew[0]} empresa${agendaNew[0] === 1 ? '' : 's'} nueva${agendaNew[0] === 1 ? '' : 's'}` : '', agendaNew[1] ? `${agendaNew[1]} lugar${agendaNew[1] === 1 ? '' : 'es'} nuevo${agendaNew[1] === 1 ? '' : 's'}` : '', agendaNew[2] ? `la ubicación de ${agendaNew[2]} lugar${agendaNew[2] === 1 ? '' : 'es'}` : ''].filter(Boolean).join(', ') }}. La próxima vez bastará con buscar la empresa por el nombre: saldrá con su ubicación.</p>
-    <h1 v-if="t">{{ t.origins[0].city || t.origins[0].address }}<small v-if="t.origins.length > 1"> (+{{ t.origins.length - 1 }})</small> → {{ t.destinations[0].city || t.destinations[0].address }}<small v-if="t.destinations.length > 1"> (+{{ t.destinations.length - 1 }})</small></h1><h1 v-else>Transporte</h1>
-    <RouterLink class="btn" to="/oficina/transportes">← Transportes</RouterLink>
+    <div>
+      <RouterLink class="pg-back" to="/oficina/transportes">← Transportes</RouterLink>
+      <h1 v-if="t">{{ t.origins[0].city || t.origins[0].address }}<small v-if="t.origins.length > 1"> (+{{ t.origins.length - 1 }})</small> → {{ t.destinations[0].city || t.destinations[0].address }}<small v-if="t.destinations.length > 1"> (+{{ t.destinations.length - 1 }})</small></h1><h1 v-else>Transporte</h1>
+      <div v-if="t" class="pg-meta"><StatusBadge :status="t.status" /><span v-if="t.reference" class="mono">{{ t.reference }}</span><span>·</span><span>{{ fmtDate(t.transport_date) }}</span><span>·</span><span>{{ t.shipper.name }}</span></div>
+    </div>
+    <div v-if="t && canWrite && isOpen" class="pg-actions"><button class="btn btn-danger" type="button" @click="cancelOpen = true">Anular transporte</button></div>
   </div>
+  <div class="fit">
+  <p v-if="agendaNew[0] || agendaNew[1] || agendaNew[2]" class="alert alert-ok">Guardado en tu agenda de empresas: {{ [agendaNew[0] ? `${agendaNew[0]} empresa${agendaNew[0] === 1 ? '' : 's'} nueva${agendaNew[0] === 1 ? '' : 's'}` : '', agendaNew[1] ? `${agendaNew[1]} lugar${agendaNew[1] === 1 ? '' : 'es'} nuevo${agendaNew[1] === 1 ? '' : 's'}` : '', agendaNew[2] ? `la ubicación de ${agendaNew[2]} lugar${agendaNew[2] === 1 ? '' : 'es'}` : ''].filter(Boolean).join(', ') }}. La próxima vez bastará con buscar la empresa por el nombre: saldrá con su ubicación.</p>
   <p v-if="error" class="alert alert-err">{{ error }}</p>
   <p v-if="ok" class="alert alert-ok">{{ ok }}</p>
+  <p v-if="t && t.status === 'CANCELADO'" class="alert alert-warn">Este transporte está anulado. Se conserva el registro y su DeCA (hay que guardarlo al menos un año); el conductor ya no lo ve.</p>
+  <p v-if="t && t.status === 'FINALIZADO'" class="alert alert-info">Este transporte está finalizado.</p>
 
-  <div v-if="t" class="grid2 detail">
-    <section class="card stack">
-      <div class="row spread"><h2>Datos del transporte</h2><span class="row"><StatusBadge :status="t.status" /><button v-if="canWrite && isOpen" class="btn btn-sm btn-danger" type="button" @click="cancelOpen = true">Anular transporte</button></span></div>
-        <p v-if="t.status === 'CANCELADO'" class="alert alert-warn">Este transporte está anulado. Se conserva el registro y su DeCA (hay que guardarlo al menos un año); el conductor ya no lo ve.</p>
-        <p v-if="t.status === 'FINALIZADO'" class="alert alert-info">Este transporte está finalizado.</p>
-      <dl class="kv">
-        <template v-if="t.reference"><dt>Referencia</dt><dd class="mono">{{ t.reference }}</dd></template>
-        <dt>Fecha</dt><dd>{{ fmtDate(t.transport_date) }}</dd>
+  <div v-if="t" class="cols2">
+    <div class="stack-panels">
+      <section class="ui-sec">
+        <header class="ui-head"><div><h2>Intervinientes</h2><p>Cargador contractual y transportista efectivo.</p></div></header>
+        <div class="ui-body"><dl class="kv">
         <dt>Cargador contractual</dt><dd>{{ t.shipper.name }}<br /><span class="muted small">NIF {{ t.shipper.nif }} · {{ t.shipper.address }}</span></dd>
         <dt>Transportista efectivo</dt><dd>{{ t.carrier.name }}<br /><span class="muted small">NIF {{ t.carrier.nif }}<template v-if="t.carrier_address"> · {{ t.carrier_address }}</template><template v-if="t.carrier_authorization"> · Autorización {{ t.carrier_authorization }}</template></span></dd>
+        </dl></div>
+      </section>
+      <section class="ui-sec">
+        <header class="ui-head"><div><h2>Ruta</h2><p>Lugares de carga y descarga con su ubicación e indicaciones.</p></div></header>
+        <div class="ui-body"><dl class="kv">
+        <dt>Fecha de realización</dt><dd>{{ fmtDate(t.transport_date) }}</dd>
         <dt>{{ t.origins.length > 1 ? 'Lugares de carga' : 'Lugar de carga' }}</dt><dd><div v-for="(s, i) in t.origins" :key="'o' + i"><b v-if="s.party">{{ s.party }}</b><span v-if="s.party"> · </span>{{ fullAddress(s) }}<span v-if="s.time"> · <b>{{ s.time }}</b></span><b v-if="s.pallets !== null && s.pallets !== undefined"> · {{ s.pallets }} {{ s.pallets === 1 ? 'palet' : 'palets' }}</b><span v-if="s.references?.length" class="muted small"> · {{ s.references.length > 1 ? 'Referencias' : 'Referencia' }}: {{ s.references.join(', ') }}</span><span v-if="s.seals?.length" class="muted small"> · {{ s.seals.length > 1 ? 'Precintos' : 'Precinto' }}: {{ s.seals.join(', ') }}</span>
           <a v-if="s.maps_url" class="btn btn-sm way" :href="s.maps_url" target="_blank" rel="noopener noreferrer">Mapa</a> <button class="btn btn-sm way" type="button" @click="shareStop(s, 'Carga')">{{ copiedStop === 'Carga' + s.address ? 'Copiado' : 'Compartir' }}</button>
           <div v-if="s.site_notes" class="muted small">{{ s.site_notes }}</div></div></dd>
         <dt>{{ t.destinations.length > 1 ? 'Lugares de descarga' : 'Lugar de descarga' }}</dt><dd><div v-for="(s, i) in t.destinations" :key="'d' + i"><b v-if="s.party">{{ s.party }}</b><span v-if="s.party"> · </span>{{ fullAddress(s) }}<span v-if="s.time"> · <b>{{ s.time }}</b></span><b v-if="s.pallets !== null && s.pallets !== undefined"> · {{ s.pallets }} {{ s.pallets === 1 ? 'palet' : 'palets' }}</b><span v-if="s.references?.length" class="muted small"> · {{ s.references.length > 1 ? 'Referencias' : 'Referencia' }}: {{ s.references.join(', ') }}</span><span v-if="s.seals?.length" class="muted small"> · {{ s.seals.length > 1 ? 'Precintos' : 'Precinto' }}: {{ s.seals.join(', ') }}</span>
           <a v-if="s.maps_url" class="btn btn-sm way" :href="s.maps_url" target="_blank" rel="noopener noreferrer">Mapa</a> <button class="btn btn-sm way" type="button" @click="shareStop(s, 'Descarga')">{{ copiedStop === 'Descarga' + s.address ? 'Copiado' : 'Compartir' }}</button>
           <div v-if="s.site_notes" class="muted small">{{ s.site_notes }}</div></div></dd>
+        </dl></div>
+      </section>
+      <section class="ui-sec">
+        <header class="ui-head"><div><h2>Mercancía</h2></div></header>
+        <div class="ui-body"><dl class="kv">
         <dt>Mercancía</dt><dd>{{ t.cargo }}<template v-if="t.units !== null && t.units !== undefined"> · {{ t.units }} {{ t.packaging ?? '' }}</template><template v-else-if="t.packages"> · {{ t.packages }}</template></dd>
         <template v-if="t.adr"><dt>Mercancía peligrosa (ADR)</dt><dd>Sí<template v-if="t.adr_detail"> · {{ t.adr_detail }}</template></dd></template>
         <template v-if="t.load_reference"><dt>Referencia de carga</dt><dd>{{ t.load_reference }}</dd></template>
@@ -103,12 +120,15 @@ onMounted(load);
         <dt>Peso</dt><dd>{{ t.weight_kg ? kg(t.weight_kg) : `Otra magnitud: ${t.alt_magnitude}` }}</dd>
         <dt>Autorización especial</dt><dd>{{ t.aec_ref ?? 'No aplica' }}</dd>
         <dt>Observaciones</dt><dd>{{ t.remarks ?? '—' }}</dd>
-      </dl>
-    </section>
 
-    <div class="stack">
-      <section class="card stack">
-        <h2>Asignación</h2>
+        </dl></div>
+      </section>
+    </div>
+
+    <div class="stack-panels">
+      <section class="ui-sec">
+        <header class="ui-head"><div><h2>Asignación</h2><p>Conductor y vehículos del transporte.</p></div></header>
+        <div class="ui-body stack">
         <div>
           <h3>Conductor</h3>
           <p>{{ t.driver ? t.driver.full_name : 'Sin conductor (pendiente)' }}</p>
@@ -123,7 +143,7 @@ onMounted(load);
           <ul v-if="t.drivers_history?.length > 1 || (t.drivers_history?.length && !t.driver)" class="small muted">
             <li v-for="(h, i) in t.drivers_history" :key="i">{{ h.full_name }}: {{ hhmm(h.valid_from) }} → {{ h.valid_to ? hhmm(h.valid_to) : 'ahora' }}</li>
           </ul>
-          <p class="muted small">Si el DeCA ya está emitido con el modelo «Carta de porte» y la empresa imprime los datos del conductor, al asignarlo (o cambiarlo) el DeCA recibe una versión nueva con el mismo QR: el conductor en la casilla 9 y, si cambia, el sucesivo en la 9.1.</p>
+          <p class="muted small">Si el DeCA ya está emitido y la empresa imprime los datos del conductor, al asignarlo (o cambiarlo) el DeCA recibe una versión nueva con el mismo QR: el conductor y, si cambia, el conductor sucesivo (relevo).</p>
         </div>
         <div>
           <h3>Vehículos</h3>
@@ -138,10 +158,12 @@ onMounted(load);
             <button class="btn btn-primary btn-sm" :disabled="!sel.tractor || busy === 'veh'" @click="saveVehicles">Guardar vehículos</button>
           </template>
         </div>
+              </div>
       </section>
 
-      <section class="card stack">
-        <h2>DeCA</h2>
+      <section class="ui-sec">
+        <header class="ui-head"><div><h2>DeCA</h2><p>Documento de control administrativo del transporte.</p></div><span v-if="t.deca" class="badge b-fin">Emitido</span><span v-else class="badge b-pend">Sin DeCA</span></header>
+        <div class="ui-body stack">
         <template v-if="t.deca">
           <dl class="kv">
             <dt>Versión actual</dt><dd>{{ t.deca.version }}</dd>
@@ -174,14 +196,13 @@ onMounted(load);
           <button v-if="canWrite" class="btn btn-primary" :disabled="!t.vehicles || busy === 'deca'" @click="makeDeca">Generar DeCA</button>
           <p v-if="canWrite && !t.vehicles" class="small muted">Asigna primero un vehículo: la matrícula es un dato obligatorio.</p>
         </template>
+              </div>
       </section>
     </div>
   </div>
-
-  <section v-if="t?.external_decas.length" class="card stack pad-top">
-    <h2>DeCA externos recibidos</h2>
-    <p class="muted small">Documentos aportados por un tercero (p. ej. el cargador). No se ha comprobado que sean un DeCA válido ni sustituyen al documento propio.</p>
-    <div class="table-wrap">
+  <section v-if="t?.external_decas.length" class="ui-sec flush pad-top">
+    <header class="ui-head"><div><h2>DeCA externos recibidos</h2><p>Documentos aportados por un tercero (p. ej. el cargador). No se ha comprobado que sean un DeCA válido ni sustituyen al documento propio.</p></div></header>
+    <div>
       <table>
         <thead><tr><th>Recibido</th><th>Añadido por</th><th>Desde</th><th>Estado</th><th></th></tr></thead>
         <tbody>
@@ -189,7 +210,7 @@ onMounted(load);
             <td>{{ fmtDateTime(e.fetched_at) }}</td><td>{{ e.added_by }}</td>
             <td>{{ e.device_status === 'AUTORIZADO' ? 'Dispositivo autorizado' : 'Dispositivo pendiente' }}</td>
             <td><span :class="['badge', e.review_status === 'REVISADO' ? 'b-fin' : 'b-pend']">{{ e.review_status === 'REVISADO' ? 'Revisado' : 'Pendiente de revisión' }}</span></td>
-            <td class="right nowrap">
+            <td class="actions">
               <button class="btn btn-sm" @click="view = { title: 'DeCA externo (PDF)', path: `/external-decas/${e.id}/pdf`, kind: 'pdf', filename: 'DeCA-externo.pdf' }">Ver PDF</button>
               <button v-if="canWrite && e.review_status !== 'REVISADO'" class="btn btn-sm btn-primary" :disabled="busy === `ext-${e.id}`" @click="review(e.id)">Marcar revisado</button>
             </td>
@@ -198,6 +219,7 @@ onMounted(load);
       </table>
     </div>
   </section>
+  </div>
 
   <FileViewer v-if="view" :title="view.title" :path="view.path" :kind="view.kind" :filename="view.filename" @close="view = null" />
   <Modal v-if="cancelOpen" title="Anular transporte" @close="cancelOpen = false">
