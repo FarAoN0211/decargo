@@ -10,7 +10,7 @@ La oficina prepara el transporte y DECARGO genera el DeCA en PDF con su código 
 - Estado: **en desarrollo activo**. Por defecto, todos los PDF llevan el rótulo «DOCUMENTO DE PRUEBA» hasta que el administrador desactiva el modo de pruebas.
 
 ## Qué hace
-- **DeCA en PDF con QR** (apartados a-h del art. 6 de la Orden FOM/2861/2012): modelo propio o carta de porte con casillas numeradas. Si el transporte cambia (vehículo, conductor), se crean versiones con el mismo enlace y las anteriores se conservan.
+- **DeCA en PDF con QR** (apartados a-h del art. 6 de la Orden FOM/2861/2012): Modelo DECARGO en fichas y en una sola página, con el logo de la empresa. Si el transporte cambia (vehículo, conductor), se crean versiones con el mismo enlace y las anteriores se conservan.
 - **Transportes** con varios lugares de carga y descarga, palets, referencias y precintos. Estados: pendiente (sin conductor), en curso, finalizado y anulado. Relevo entre conductores.
 - **Aplicación del conductor** (web instalable y app Android): su transporte, el DeCA y el QR (también sin cobertura), «cómo llegar», el PIN de la tarjeta de combustible y finalizar su parte o el transporte completo.
 - **Avisos** al asignar o modificar un transporte. En la app Android encienden la pantalla.

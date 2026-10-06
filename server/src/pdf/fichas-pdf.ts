@@ -34,6 +34,9 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Uint8Array> {
   doc.setCreator('DECARGO'); doc.setProducer('DECARGO');
   doc.setCreationDate(i.createdAt); doc.setModificationDate(i.modifiedAt);
 
+  // Logo de la empresa (opcional). Si la imagen no se puede incrustar, el DeCA se emite igual, sin logo.
+  const logo = i.logo ? await (i.logo.png ? doc.embedPng(i.logo.bytes) : doc.embedJpg(i.logo.bytes)).catch(() => null) : null;
+
   const d = i.data;
   const banner = i.banner ?? (i.isTest ? 'DOCUMENTO DE PRUEBA · SIN VALOR · DECARGO' : null);
 
@@ -125,25 +128,33 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Uint8Array> {
   const blocks: Array<(c: Ctx) => number> = [
     // Cabecera: datos del documento + QR
     (c) => {
-      const qrCell = qrCellFor(c.s), leftW = W - qrCell - GAP;
-      const head: Field[][] = [
-        [['Referencia', d.reference ?? ''], ['Creado', i.blank ? '' : when(i.createdAt.toISOString())]],
-        [['f) Fecha de realización', date], ['Versión', i.blank ? '' : String(i.versionNo)]],
-        [['Última modificación', i.blank ? '' : when(i.modifiedAt.toISOString())]]
-      ];
+      // [logo] [datos del documento] [QR]. La casilla del logo es como la del QR (más ancha si el logo es apaisado).
+      const qrCell = qrCellFor(c.s), logoW = logo ? Math.round(qrCell * (logo.width / logo.height > 1.6 ? 1.45 : 1)) : 0;
+      const hx = M + (logo ? logoW + GAP : 0), leftW = W - qrCell - GAP - (logo ? logoW + GAP : 0);
+      const ref: Field = ['Referencia', d.reference ?? ''], made: Field = ['Creado', i.blank ? '' : when(i.createdAt.toISOString())];
+      const fecha: Field = ['f) Fecha de realización', date], ver: Field = ['Versión', i.blank ? '' : String(i.versionNo)];
+      const mod: Field = ['Última modificación', i.blank ? '' : when(i.modifiedAt.toISOString())];
+      // Con logo queda menos ancho: dos columnas en vez de tres.
+      const head: Field[][] = logo ? [[ref, made, mod], [fecha, ver]] : [[ref, made], [fecha, ver], [mod]];
       const urlF: Field[] = i.blank ? [] : [['Documento en línea (también en el QR)', i.url]];
       const page = c.page; c.page = null;
-      const tH = c.s + 9, cw = (leftW - 2 * PAD - 16) / 3;
+      const tH = c.s + 9, cw = (leftW - 2 * PAD - 8 * (head.length - 1)) / head.length;
       const headH = Math.max(...head.map((col) => colH(col, cw, c.s)));
       const inner = headH + colH(urlF, leftW - 2 * PAD, c.s);
       const h = Math.max(tH + PAD + inner + PAD, qrCell);
       c.page = page;
       if (c.page) {
-        roundRect(c.page, M, c.y, leftW, h);
-        c.page.drawText('Documento de Control Administrativo (DeCA)', { x: M + PAD, y: c.y - PAD - c.s - 2, size: c.s + 3, font: F.bold, color: INK });
-        head.forEach((col, k) => drawFields(c, col, M + PAD + k * (cw + 8), c.y - PAD - tH, cw));
-        drawFields(c, urlF, M + PAD, c.y - PAD - tH - headH, leftW - 2 * PAD);
-        const qx = M + leftW + GAP;
+        if (logo) {
+          roundRect(c.page, M, c.y, logoW, h);
+          const k = Math.min((logoW - 12) / logo.width, (h - 12) / logo.height), lw = logo.width * k, lh = logo.height * k;
+          c.page.drawImage(logo, { x: M + (logoW - lw) / 2, y: c.y - h + (h - lh) / 2, width: lw, height: lh });
+        }
+        roundRect(c.page, hx, c.y, leftW, h);
+        const title = 'Documento de Control Administrativo (DeCA)', ts = Math.min(c.s + 3, (leftW - 2 * PAD) / F.bold.widthOfTextAtSize(title, 1));
+        c.page.drawText(title, { x: hx + PAD, y: c.y - PAD - c.s - 2, size: ts, font: F.bold, color: INK });
+        head.forEach((col, k) => drawFields(c, col, hx + PAD + k * (cw + 8), c.y - PAD - tH, cw));
+        drawFields(c, urlF, hx + PAD, c.y - PAD - tH - headH, leftW - 2 * PAD);
+        const qx = hx + leftW + GAP;
         roundRect(c.page, qx, c.y, qrCell, h);
         if (!i.blank) {
           const qr = QRCode.create(i.url, { errorCorrectionLevel: 'M' });

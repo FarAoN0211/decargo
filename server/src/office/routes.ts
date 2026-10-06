@@ -12,6 +12,7 @@ import { checkTaxId } from './taxid';
 import { createParty, createSite, getParty, searchParties, updateParty, updateSite } from './parties';
 import { getProfile, ibanPreview, revealField, saveProfile } from './profile';
 import { reissueDeca, reissueOutdated } from './reissue';
+import { currentLogo, LOGO_MAX_BYTES, setLogo } from '../common/logo';
 import { UUID_RE, bad, optUuid } from './validate';
 
 const actorOf = (a: AuthContext): Actor => ({ kind: 'user', userId: a.userId, role: a.role });
@@ -81,6 +82,15 @@ export function registerOfficeRoutes(app: FastifyInstance, pool: Pool, storage: 
   app.put('/api/v1/admin/config/template', { preHandler: admin, schema: { body: obj } }, async (req) => setTemplate(pool, actorOf(req.auth!), (req.body ?? {}) as Record<string, unknown>));
   app.get<{ Querystring: { template?: string; mode?: string } }>('/api/v1/admin/config/template-preview', { preHandler: admin }, async (req, reply) =>
     reply.type('application/pdf').header('Cache-Control', 'private, no-store').send(await templatePreview(pool, req.query.template, req.query.mode)));
+  // Logo de la empresa (cabecera del Modelo DECARGO): imagen PNG/JPEG en base64 dentro de un JSON. Límite propio (la API admite 16 KB por defecto).
+  app.put('/api/v1/admin/config/logo', { preHandler: admin, bodyLimit: Math.ceil(LOGO_MAX_BYTES * 4 / 3) + 1024, config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+    schema: { body: { type: 'object', required: ['data'], additionalProperties: false, properties: { data: { type: ['string', 'null'], maxLength: Math.ceil(LOGO_MAX_BYTES * 4 / 3) + 4 } } } } },
+    async (req) => { await setLogo(pool, actorOf(req.auth!), (req.body as { data: string | null }).data); return getConfig(pool); });
+  app.get('/api/v1/admin/config/logo', { preHandler: admin }, async (_req, reply) => {
+    const l = await currentLogo(pool);
+    if (!l) return reply.code(404).send({ error: 'sin_logo' });
+    return reply.type(l.png ? 'image/png' : 'image/jpeg').header('Cache-Control', 'private, no-store').header('X-Content-Type-Options', 'nosniff').send(Buffer.from(l.bytes));
+  });
   app.put('/api/v1/admin/config/company', { preHandler: admin, schema: { body: obj } }, async (req) => setCompany(pool, actorOf(req.auth!), (req.body ?? {}) as Record<string, unknown>));
   app.put('/api/v1/admin/config/fcm', { preHandler: admin, schema: { body: obj }, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => setFcm(pool, actorOf(req.auth!), (req.body ?? {}) as Record<string, unknown>));
   app.put('/api/v1/admin/config/flags', { preHandler: admin, schema: { body: obj } }, async (req) => setFlags(pool, actorOf(req.auth!), (req.body ?? {}) as Record<string, unknown>));

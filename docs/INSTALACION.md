@@ -91,7 +91,7 @@ Con el dominio puesto:
 ## Antes de usarlo con datos reales
 En **Configuración**:
 - **Datos de la empresa:** son el transportista efectivo de los DeCA.
-- **Modelo de documento:** el modelo DECARGO o la carta de porte.
+- **Documento (DeCA):** sube el logo de la empresa (sale en la cabecera del DeCA) y decide si se imprimen los datos del conductor.
 - **Desactivar el modo de pruebas:** mientras esté activo, los PDF llevan «DOCUMENTO DE PRUEBA».
 - **Lista «antes de usar con datos reales»:** https, modo de pruebas, endpoints de prueba y avisos.
 - **App Android** (opcional): para los avisos que encienden la pantalla, sube aquí las credenciales de Firebase. La propia pantalla explica cómo obtenerlas.

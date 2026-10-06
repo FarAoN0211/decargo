@@ -46,7 +46,9 @@ const palLabel = (n: number): string => `${n} ${n === 1 ? 'palet' : 'palets'}`;
 // ----------------------------------------------------------------------------- datos ficticios iniciales
 const company: Row = { transport_authorization: '12345678', name: 'Transportes Ejemplo del Sur S.L.', nif: 'B12345674', address: 'Calle Ficticia 1', postal_code: '18000', city: 'Granada', province: 'Granada', country: 'España' };
 const PUBLIC = `${window.location.origin}/demo/`;
-const settings = { doc_template: 'DECARGO', deca_show_driver: true, food_transport: true, expiry_warn_days: 30, test_mode: false, dev_endpoints: false };
+/** Logo de la empresa de la demo (en memoria; vuelve a «sin logo» al recargar). Cada DeCA guarda el que tenía al emitirse. */
+let demoLogo: { bytes: Uint8Array; png: boolean; width: number; height: number; at: string } | null = null;
+const settings = { deca_show_driver: true, food_transport: true, expiry_warn_days: 30, test_mode: false, dev_endpoints: false };
 
 const users: Row[] = [
   { id: uid(), username: 'ana.demo', full_name: 'Ana Gestora Demo', role: 'admin', active: true, pending_activation: false, totp_enabled: true, created_at: ts(-200) },
@@ -112,8 +114,8 @@ function seedTransport(o: Row): Row {
 }
 function issue(t: Row): void {
   const now = new Date().toISOString();
-  // Como en la aplicación real: el DeCA guarda el modelo y los vehículos con los que se emitió (los cambios van en la 8.1).
-  t.deca = { id: uid(), version: 1, status: 'ACTIVE', created_at: now, modified_at: now, public_url: `${PUBLIC}d/${fake(24)}`, template: settings.doc_template, tractor_id: t.tractor_id, trailer_id: t.trailer_id, versions: [{ version_no: 1, method: 'ORIGINAL', created_at: now, sha256: fake(64), size_bytes: 30000 + Math.floor(Math.random() * 5000) }] };
+  // Como en la aplicación real: siempre el Modelo DECARGO; el DeCA guarda el logo y los vehículos con los que se emitió (los cambios van en la 8.1).
+  t.deca = { id: uid(), version: 1, status: 'ACTIVE', created_at: now, modified_at: now, public_url: `${PUBLIC}d/${fake(24)}`, template: 'DECARGO', logo: demoLogo, tractor_id: t.tractor_id, trailer_id: t.trailer_id, versions: [{ version_no: 1, method: 'ORIGINAL', created_at: now, sha256: fake(64), size_bytes: 30000 + Math.floor(Math.random() * 5000) }] };
 }
 function newVersion(t: Row, reason: string): void {
   if (!t.deca) return;
@@ -173,8 +175,9 @@ function driverShape(t: Row): Row {
     destinations: resolve(t.destinations).map((s) => ({ party: s.party, address: fullAddress(s), label: s.label, maps_url: s.maps_url, notes: s.site_notes, time: s.time ?? null, pallets: s.pallets ?? null, references: s.references ?? [], seals: s.seals ?? [] })) };
 }
 /** El DeCA de la demo: mismos datos y mismo generador que la aplicación real, con el rótulo de demostración. */
-async function pdfOf(t: Row, opts: { template?: string; banner?: string } = {}): Promise<Blob> {
-  const tpl = opts.template ?? t.deca?.template ?? settings.doc_template;
+async function pdfOf(t: Row, opts: { template?: string; banner?: string; logo?: typeof demoLogo } = {}): Promise<Blob> {
+  const tpl = opts.template ?? t.deca?.template ?? 'DECARGO';
+  const logo = opts.logo !== undefined ? opts.logo : t.deca ? t.deca.logo ?? null : demoLogo;
   const tr = vehById(t.deca?.tractor_id ?? t.tractor_id), tl = vehById(t.deca?.trailer_id ?? t.trailer_id);
   if (!tr) throw new DemoError(409, 'vehicle_required');
   const ids: string[] = Array.from(new Set(t.history.map((h: Row) => h.driver_id as string)));
@@ -195,7 +198,7 @@ async function pdfOf(t: Row, opts: { template?: string; banner?: string } = {}):
   };
   const gen = tpl === 'CARTA_DE_PORTE' ? generateCartaPdf : tpl === 'DECARGO' ? generateFichasPdf : generateDecaPdf;
   const d = t.deca ?? { id: '00000000-0000-4000-8000-000000000000', version: 1, created_at: new Date().toISOString(), modified_at: new Date().toISOString(), public_url: PUBLIC };
-  const bytes = await gen({ decaId: d.id, versionNo: d.version, data, url: d.public_url, createdAt: new Date(d.created_at), modifiedAt: new Date(d.modified_at), isTest: false, banner: opts.banner ?? DEMO_BANNER });
+  const bytes = await gen({ decaId: d.id, versionNo: d.version, data, url: d.public_url, createdAt: new Date(d.created_at), modifiedAt: new Date(d.modified_at), isTest: false, banner: opts.banner ?? DEMO_BANNER, logo });
   return new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' });
 }
 
@@ -226,11 +229,8 @@ const maskV = (v: string): string => '•'.repeat(Math.max(v.length - 4, 3)) + v
 
 function config(): Row {
   return { public_base_url: window.location.origin, source: 'web', env_public_base_url: null, error: null, https: true, insecure_allowed: false,
-    test_mode: settings.test_mode, test_mode_source: 'web', dev_endpoints: false, dev_endpoints_available: false, doc_template: settings.doc_template,
-    doc_templates: [
-      { code: 'DECARGO', label: 'Modelo DECARGO (recomendado)', description: 'En fichas y en una sola página: cabecera con QR, intervinientes, carga y entrega con hora, vehículo y conductor, mercancía (unidades, embalaje, ADR) y observaciones.' },
-      { code: 'ESTANDAR', label: 'Modelo por apartados', description: 'Una sección por apartado del artículo 6 de la Orden (a a h), en texto corrido.' },
-      { code: 'CARTA_DE_PORTE', label: 'Carta de porte (casillas numeradas)', description: 'El formulario clásico con casillas numeradas 1 a 15, como el documento de control en papel.' }],
+    test_mode: settings.test_mode, test_mode_source: 'web', dev_endpoints: false, dev_endpoints_available: false,
+    logo: demoLogo ? { sha256: 'demo', mime: demoLogo.png ? 'image/png' : 'image/jpeg', width: demoLogo.width, height: demoLogo.height, updated_at: demoLogo.at, updated_by: 'demo' } : null,
     deca_show_driver: settings.deca_show_driver, food_transport: settings.food_transport, expiry_warn_days: settings.expiry_warn_days, company: { ...company },
     push_configured: true, fcm: { configured: false, project_id: null, package: 'es.decargo.app', updated_at: null, updated_by: null }, decas_total: transports.filter((t) => t.deca).length, decas_other_base: 0 };
 }
@@ -373,7 +373,7 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
     const changed = t.driver_id !== d.id;
     t.driver_id = d.id; t.history.push({ driver_id: d.id, valid_from: new Date().toISOString(), valid_to: null }); if (t.relay_id === d.id) t.relay_id = null;
     if (t.status === 'PENDIENTE') t.status = 'EN_CURSO';
-    if (changed && t.deca && settings.doc_template === 'CARTA_DE_PORTE' && settings.deca_show_driver) newVersion(t, 'Se asigna el conductor');
+    if (changed && t.deca && (t.deca.template === 'CARTA_DE_PORTE' || t.deca.template === 'DECARGO') && settings.deca_show_driver) newVersion(t, 'Se asigna el conductor');
     return none();
   }
   if ((x = m(/^\/transports\/([^/]+)\/relay$/)) && method === 'DELETE') { officeOnly(); transportBy(x[1]).relay_id = null; return none(); }
@@ -499,12 +499,25 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
     adminOnly();
     if (method === 'GET' && path === '/admin/config') return ok(config());
     if (path === '/admin/config/company') { Object.assign(company, { transport_authorization: opt(b.transport_authorization), name: req(b.name, 'name', 2), nif: req(b.nif, 'nif', 5), address: req(b.address, 'address', 3), postal_code: opt(b.postal_code), city: opt(b.city), province: opt(b.province), country: opt(b.country) }); return ok(config()); }
-    if (path === '/admin/config/template') { if (b.template) settings.doc_template = b.template; if (typeof b.show_driver === 'boolean') settings.deca_show_driver = b.show_driver; return ok(config()); }
+    if (path === '/admin/config/template') { if (b.template !== undefined && b.template !== 'DECARGO') throw bad('template'); if (typeof b.show_driver === 'boolean') settings.deca_show_driver = b.show_driver; return ok(config()); }
     if (path === '/admin/config/documents') { if (typeof b.food_transport === 'boolean') settings.food_transport = b.food_transport; if (b.warn_days) settings.expiry_warn_days = Number(b.warn_days); return ok(config()); }
     if (path === '/admin/config/flags') { if (typeof b.test_mode === 'boolean') settings.test_mode = b.test_mode; return ok(config()); }
     if (path.startsWith('/admin/config/template-preview')) {
       const t = transports.find((y) => y.deca) ?? transports[0];
-      return { status: 200, blob: await pdfOf(t, { template: q.get('template') ?? settings.doc_template, banner: 'MODELO DE EJEMPLO · DATOS FICTICIOS · SIN VALOR' }) };
+      return { status: 200, blob: await pdfOf(t, { template: 'DECARGO', logo: demoLogo, banner: 'MODELO DE EJEMPLO · DATOS FICTICIOS · SIN VALOR' }) };
+    }
+    if (path === '/admin/config/logo' && method === 'GET') {
+      if (!demoLogo) throw new DemoError(404, 'sin_logo');
+      return { status: 200, blob: new Blob([demoLogo.bytes as Uint8Array<ArrayBuffer>], { type: demoLogo.png ? 'image/png' : 'image/jpeg' }) };
+    }
+    if (path === '/admin/config/logo' && method === 'PUT') {
+      if (b.data === null) { demoLogo = null; return ok(config()); }
+      const bytes = Uint8Array.from(atob(String(b.data ?? '')), (ch) => ch.charCodeAt(0));
+      const png = bytes[0] === 0x89 && bytes[1] === 0x50, jpg = bytes[0] === 0xff && bytes[1] === 0xd8;
+      if (!png && !jpg) throw new DemoError(400, 'logo_invalido');
+      const bmp = await createImageBitmap(new Blob([bytes as Uint8Array<ArrayBuffer>]));
+      demoLogo = { bytes, png, width: bmp.width, height: bmp.height, at: new Date().toISOString() }; bmp.close();
+      return ok(config());
     }
     NOT_IN_DEMO();
   }

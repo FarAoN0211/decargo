@@ -3,9 +3,10 @@ import { lookup } from 'node:dns/promises';
 import type { Pool } from 'pg';
 import { appendAudit } from '../common/audit';
 import { optional } from '../common/config';
-import { renderDecaPdf, templateOf } from '../pdf/render';
+import { renderDecaPdf } from '../pdf/render';
+import { currentLogo, logoInfo } from '../common/logo';
 import { type DecaData } from '../pdf/deca-pdf';
-import { DOC_TEMPLATES, docTemplate, showDriverInDeca, FLAG_KEYS, PUBLIC_BASE_KEY, devEndpoints, flagSource, foodTransport, getPublicBase, normalizePublicBase, publicBaseSource, testMode, warnDays } from '../common/settings';
+import { showDriverInDeca, FLAG_KEYS, PUBLIC_BASE_KEY, devEndpoints, flagSource, foodTransport, getPublicBase, normalizePublicBase, publicBaseSource, testMode, warnDays } from '../common/settings';
 import { isPublicAddress } from '../external/netpolicy';
 import { Actor, ApiError, actorStr } from '../identity/service';
 import { addrParts, bad, nif, optText, text } from './validate';
@@ -22,7 +23,7 @@ export async function getConfig(pool: Pool) {
     https: !!base && base.startsWith('https://'), insecure_allowed: optional('ALLOW_INSECURE_PUBLIC_URL', '0') === '1',
     test_mode: await testMode(pool), test_mode_source: await flagSource(pool, FLAG_KEYS.test_mode),
     dev_endpoints: await devEndpoints(pool), dev_endpoints_available: !!process.env.DEV_API_KEY,
-    doc_template: await docTemplate(pool), doc_templates: DOC_TEMPLATES, deca_show_driver: await showDriverInDeca(pool),
+    deca_show_driver: await showDriverInDeca(pool), logo: await logoInfo(pool),
     food_transport: await foodTransport(pool), expiry_warn_days: await warnDays(pool),
     company: (await pool.query('SELECT name, nif, address, postal_code, city, province, country, transport_authorization FROM company ORDER BY created_at LIMIT 1')).rows[0] ?? null,
     push_configured: !!process.env.VAPID_PUBLIC_KEY && !!process.env.VAPID_PRIVATE_KEY,
@@ -147,12 +148,13 @@ export async function setDocSettings(pool: Pool, actor: Actor, body: Record<stri
   return getConfig(pool);
 }
 
-/** Modelo de documento de la empresa y si se imprimen los datos del conductor (casilla 9). Cambia solo los DeCA que se emitan a partir de ahora. */
+/** Si se imprimen los datos del conductor en el DeCA. Cambia solo los DeCA que se emitan a partir de ahora.
+ *  El modelo ya no se elige: los DeCA nuevos son siempre del Modelo DECARGO (los ya emitidos conservan el suyo). */
 export async function setTemplate(pool: Pool, actor: Actor, body: Record<string, unknown>) {
   const changes: Array<[string, string, unknown]> = [];
-  if (body.template !== undefined) { if (!DOC_TEMPLATES.some((t) => t.code === body.template)) throw bad('template'); changes.push(['doc_template', String(body.template), body.template]); }
+  if (body.template !== undefined && body.template !== 'DECARGO') throw bad('template');
   if (body.show_driver !== undefined) { if (typeof body.show_driver !== 'boolean') throw bad('show_driver'); changes.push(['deca_show_driver', body.show_driver ? '1' : '0', body.show_driver]); }
-  if (!changes.length) throw bad('template');
+  if (!changes.length) throw bad('show_driver');
   const c = await pool.connect();
   try {
     await c.query('BEGIN');
@@ -167,9 +169,9 @@ export async function setTemplate(pool: Pool, actor: Actor, body: Record<string,
   return getConfig(pool);
 }
 
-/** PDF de muestra de un modelo (datos ficticios, con rótulo de ejemplo) o formulario en blanco para imprimir. No crea ningún DeCA. */
+/** PDF de muestra del Modelo DECARGO (datos ficticios, con rótulo de ejemplo y el logo vigente) o formulario en blanco para imprimir. No crea ningún DeCA. */
 export async function templatePreview(pool: Pool, templateRaw: unknown, modeRaw: unknown): Promise<Buffer> {
-  if (!DOC_TEMPLATES.some((t) => t.code === templateRaw)) throw bad('template');
+  if (templateRaw !== undefined && templateRaw !== 'DECARGO') throw bad('template');
   const blank = modeRaw === 'blanco';
   const co = (await pool.query('SELECT name, nif, address FROM company ORDER BY created_at LIMIT 1')).rows[0] ?? { name: 'EMPRESA DE EJEMPLO S.L.', nif: 'B00000000', address: 'Calle Ejemplo 1, 04000 Almería' };
   const now = new Date();
@@ -186,8 +188,8 @@ export async function templatePreview(pool: Pool, templateRaw: unknown, modeRaw:
   };
   const empty: DecaData = { shipper: { name: '', nif: '', address: '' }, carrier: { name: '', nif: '' }, origin: '', destination: '', cargoDescription: '', weightKg: null, altMagnitude: null, aecRef: null, transportDate: now.toISOString().slice(0, 10), tractorPlate: '', trailerPlate: null, remarks: null };
   const input = { decaId: '00000000-0000-4000-8000-000000000000', versionNo: 1, data: blank ? { ...empty, consignees: [] } : sample, url: 'https://ejemplo.invalid/d/EJEMPLO', createdAt: now, modifiedAt: now, isTest: false, blank,
-    banner: blank ? undefined : 'MODELO DE EJEMPLO · SIN VALOR · DECARGO' };
-  return renderDecaPdf(templateOf(templateRaw), input);
+    banner: blank ? undefined : 'MODELO DE EJEMPLO · SIN VALOR · DECARGO', logo: await currentLogo(pool) };
+  return renderDecaPdf('DECARGO', input);
 }
 
 /** Estado de los avisos de la app Android (Firebase): nunca devuelve la clave privada. */

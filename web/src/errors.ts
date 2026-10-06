@@ -28,6 +28,8 @@ export function messageFor(e: unknown): string {
     case 'invalid_public_url': return d.reason === 'https' ? 'La dirección debe empezar por https://' : d.reason === 'solo_dominio' ? 'Escribe solo el dominio, sin ruta ni parámetros (por ejemplo https://decargo.tuempresa.com).' : d.reason === 'dominio' ? 'Escribe un nombre de dominio (no una dirección IP).' : 'La dirección no es válida.';
     case 'invalid_iban': return d.reason === 'control' ? 'El IBAN no es válido (dígitos de control incorrectos).' : d.reason === 'longitud' ? 'El IBAN no tiene la longitud correcta para ese país.' : d.reason === 'cuenta' ? 'El IBAN no es válido (dígitos de control de la cuenta incorrectos).' : 'El IBAN no tiene un formato válido.';
     case 'sin_dato': return 'Ese dato no está guardado.';
+    case 'logo_invalido': return 'La imagen del logo no es válida. Usa un PNG, JPEG, WebP o SVG.';
+    case 'logo_demasiado_grande': return 'El logo pesa demasiado (máximo 256 KB). Prueba con una imagen más pequeña.';
     case 'fcm_google_services': return 'El google-services.json no es válido. Descárgalo de nuevo desde la consola de Firebase.';
     case 'fcm_paquete': return `El google-services.json no incluye la app Android «${d.package}». Añádela en Firebase con ese nombre de paquete y vuelve a descargarlo.`;
     case 'fcm_cuenta_servicio': return 'La clave de la cuenta de servicio no es válida. Genera una nueva en Firebase → Cuentas de servicio.';

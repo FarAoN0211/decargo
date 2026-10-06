@@ -53,16 +53,5 @@ export async function warnDays(q: Queryable): Promise<number> {
   return Number.isInteger(n) && n >= 1 && n <= 365 ? n : 30;
 }
 
-export type DocTemplate = 'DECARGO' | 'ESTANDAR' | 'CARTA_DE_PORTE';
-export const DOC_TEMPLATES: Array<{ code: DocTemplate; label: string; description: string }> = [
-  { code: 'DECARGO', label: 'Modelo DECARGO (recomendado)', description: 'En fichas y en una sola página: cabecera con QR, intervinientes, carga y entrega con hora, vehículo y conductor, mercancía (unidades, embalaje, ADR) y observaciones.' },
-  { code: 'ESTANDAR', label: 'Modelo por apartados', description: 'Una sección por apartado del artículo 6 de la Orden (a a h), en texto corrido.' },
-  { code: 'CARTA_DE_PORTE', label: 'Carta de porte (casillas numeradas)', description: 'El formulario clásico con casillas numeradas 1 a 15, como el documento de control en papel.' }
-];
-/** Modelo de documento de la empresa: el elegido en Configuración y, si no, DOC_TEMPLATE del .env (por defecto, el modelo DECARGO). */
-export async function docTemplate(q: Queryable): Promise<DocTemplate> {
-  const v = (await q.query("SELECT value FROM app_setting WHERE key = 'doc_template'")).rows[0]?.value ?? optional('DOC_TEMPLATE', 'DECARGO');
-  return v === 'CARTA_DE_PORTE' || v === 'ESTANDAR' ? v : 'DECARGO';   // por defecto, el Modelo DECARGO
-}
-/** ¿Imprimir en el DeCA el nombre, DNI y teléfono del conductor (casilla 9)? Decisión de la empresa; por defecto NO (el DeCA se descarga con su enlace). */
+/** ¿Imprimir en el DeCA el nombre, DNI y teléfono del conductor? Decisión de la empresa; por defecto NO (el DeCA se descarga con su enlace). */
 export const showDriverInDeca = (q: Queryable): Promise<boolean> => flag(q, 'deca_show_driver', 'DECA_SHOW_DRIVER', '0');

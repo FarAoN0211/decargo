@@ -39,8 +39,12 @@ export interface DecaData {
   destinationStops?: Array<{ party: string | null; address: string; time: string | null; pallets: number | null; refs: string[]; seals: string[] }>;
   isTest?: boolean;                                              // el DeCA se emitió en modo de pruebas (las versiones posteriores lo conservan)
   driver2?: { name: string; nif: string | null; phone: string | null } | null;   // casilla 9.1: conductor efectivo sucesivo
-  vehicleChanges?: Array<{ at: string; tractorPlate: string; trailerPlate: string | null }>;   // casilla 8.1: cambios de vehículo (el original queda en la casilla 8)
+  vehicleChanges?: Array<{ at: string; tractorPlate: string; trailerPlate: string | null }>;
+  logoSha256?: string | null;                                    // logo de la empresa con el que se emitió (las versiones lo conservan)   // casilla 8.1: cambios de vehículo (el original queda en la casilla 8)
 }
+
+/** Imagen del logo de la empresa (PNG o JPEG) para la cabecera del Modelo DECARGO. */
+export interface PdfLogo { bytes: Uint8Array; png: boolean }
 
 export interface DecaPdfInput {
   decaId: string;
@@ -52,6 +56,7 @@ export interface DecaPdfInput {
   createdAt: Date;      // metadato CreationDate
   modifiedAt: Date;     // metadato ModDate
   isTest: boolean;
+  logo?: PdfLogo | null; // logo de la empresa (solo lo usa el Modelo DECARGO)
 }
 
 export const INK = rgb(0.07, 0.24, 0.31);
@@ -70,8 +75,15 @@ export function wrap(text: string, font: PDFFont, size: number, maxWidth: number
     let line = '';
     for (const word of para.split(/\s+/)) {
       const t = line ? `${line} ${word}` : word;
-      if (font.widthOfTextAtSize(t, size) <= maxWidth) line = t;
-      else { if (line) out.push(line); line = word; }
+      if (font.widthOfTextAtSize(t, size) <= maxWidth) { line = t; continue; }
+      if (line) out.push(line);
+      line = word;
+      // Una palabra más larga que la línea (p. ej. el enlace del DeCA) se parte para no salirse del recuadro.
+      while (line.length > 1 && font.widthOfTextAtSize(line, size) > maxWidth) {
+        let n = line.length - 1;
+        while (n > 1 && font.widthOfTextAtSize(line.slice(0, n), size) > maxWidth) n--;
+        out.push(line.slice(0, n)); line = line.slice(n);
+      }
     }
     out.push(line);
   }

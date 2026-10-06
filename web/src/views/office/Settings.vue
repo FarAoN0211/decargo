@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import FileViewer from '../../components/FileViewer.vue';
-import { api, auth } from '../../api';
+import { api, apiBlob, auth } from '../../api';
 import { messageFor } from '../../errors';
 
-interface Cfg { doc_template: string; doc_templates: { code: string; label: string; description: string }[]; deca_show_driver: boolean; food_transport: boolean; expiry_warn_days: number; company: { name: string; nif: string; address: string; postal_code: string | null; city: string | null; province: string | null; country: string | null; transport_authorization?: string | null } | null; test_mode_source: string; dev_endpoints_available: boolean; public_base_url: string | null; source: 'web' | 'env'; env_public_base_url: string | null; error: string | null; https: boolean; insecure_allowed: boolean;
+interface Cfg { deca_show_driver: boolean; logo: { sha256: string; mime: string; width: number; height: number; updated_at: string; updated_by: string } | null; food_transport: boolean; expiry_warn_days: number; company: { name: string; nif: string; address: string; postal_code: string | null; city: string | null; province: string | null; country: string | null; transport_authorization?: string | null } | null; test_mode_source: string; dev_endpoints_available: boolean; public_base_url: string | null; source: 'web' | 'env'; env_public_base_url: string | null; error: string | null; https: boolean; insecure_allowed: boolean;
   test_mode: boolean; dev_endpoints: boolean; push_configured: boolean; fcm: { configured: boolean; project_id: string | null; package: string; updated_at: string | null; updated_by: string | null }; decas_total: number; decas_other_base: number }
 interface Probe { ok: boolean; status: number | null; detail: string }
 interface Check { url: string; checked: boolean; reason: string | null; web: Probe | null; docs: Probe | null }
@@ -49,7 +49,58 @@ async function saveTemplate(body: Record<string, unknown>): Promise<void> {
   error.value = ''; tplMsg.value = '';
   try { cfg.value = await api<Cfg>('/admin/config/template', { method: 'PUT', body }); tplMsg.value = 'Guardado. Se aplica a los DeCA que se emitan a partir de ahora.'; } catch (e) { error.value = messageFor(e); }
 }
-const showTpl = (template: string, mode: 'ejemplo' | 'blanco', title: string): void => { preview.value = { title, path: `/admin/config/template-preview?template=${template}&mode=${mode}`, kind: 'pdf', filename: `${template.toLowerCase()}-${mode}.pdf` }; };
+const showTpl = (mode: 'ejemplo' | 'blanco', title: string): void => { preview.value = { title, path: `/admin/config/template-preview?template=DECARGO&mode=${mode}`, kind: 'pdf', filename: `deca-decargo-${mode}.pdf` }; };
+
+// Logo de la empresa (cabecera del Modelo DECARGO). La imagen se vuelve a dibujar en el navegador (PNG, o JPEG si pesa mucho) antes de subirla:
+// así se reduce su tamaño y el servidor solo recibe una imagen limpia y pequeña.
+const LOGO_MAX = 256 * 1024;
+const logoUrl = ref(''), logoMsg = ref(''), logoBusy = ref(false);
+async function loadLogo(): Promise<void> {
+  if (logoUrl.value) { URL.revokeObjectURL(logoUrl.value); logoUrl.value = ''; }
+  if (!cfg.value?.logo) return;
+  try { logoUrl.value = URL.createObjectURL(await apiBlob('/admin/config/logo')); } catch { /* sin vista previa */ }
+}
+function toBase64(b: Blob): Promise<string> {
+  return new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] ?? ''); r.onerror = () => ko(r.error); r.readAsDataURL(b); });
+}
+async function prepareLogo(file: File): Promise<Blob> {
+  const src = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise<void>((ok, ko) => { img.onload = () => ok(); img.onerror = () => ko(new Error('imagen')); img.src = src; });
+    if (!img.naturalWidth || !img.naturalHeight) throw new Error('imagen');
+    for (const max of [1200, 900, 600, 400]) {
+      const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(img.naturalWidth * k)); cv.height = Math.max(1, Math.round(img.naturalHeight * k));
+      const g = cv.getContext('2d')!;
+      g.drawImage(img, 0, 0, cv.width, cv.height);
+      const png = await new Promise<Blob | null>((ok) => cv.toBlob(ok, 'image/png'));
+      if (png && png.size <= LOGO_MAX) return png;
+      g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);   // JPEG: sin transparencia, fondo blanco
+      const jpg = await new Promise<Blob | null>((ok) => cv.toBlob(ok, 'image/jpeg', 0.9));
+      if (jpg && jpg.size <= LOGO_MAX) return jpg;
+    }
+    throw new Error('grande');
+  } finally { URL.revokeObjectURL(src); }
+}
+async function uploadLogo(ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement, file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  error.value = ''; logoMsg.value = ''; logoBusy.value = true;
+  try {
+    let blob: Blob;
+    try { blob = await prepareLogo(file); } catch { error.value = 'No se puede usar esta imagen. Usa un PNG, JPEG, WebP o SVG.'; return; }
+    cfg.value = await api<Cfg>('/admin/config/logo', { method: 'PUT', body: { data: await toBase64(blob) } });
+    await loadLogo(); logoMsg.value = 'Logo guardado. Sale en los DeCA que se emitan a partir de ahora.';
+  } catch (e) { error.value = messageFor(e); } finally { logoBusy.value = false; }
+}
+async function removeLogo(): Promise<void> {
+  error.value = ''; logoMsg.value = ''; logoBusy.value = true;
+  try { cfg.value = await api<Cfg>('/admin/config/logo', { method: 'PUT', body: { data: null } }); await loadLogo(); logoMsg.value = 'Logo quitado. Los DeCA ya emitidos conservan el suyo.'; }
+  catch (e) { error.value = messageFor(e); } finally { logoBusy.value = false; }
+}
 const docMsg = ref(''), warn = ref(30);
 async function saveDocs(food?: boolean): Promise<void> {
   error.value = ''; docMsg.value = '';
@@ -67,7 +118,7 @@ async function setFlag(name: 'test_mode' | 'dev_endpoints', value: boolean): Pro
   try { cfg.value = await api<Cfg>('/admin/config/flags', { method: 'PUT', body: { [name]: value } }); } catch (e) { error.value = messageFor(e); } finally { flagBusy.value = ''; }
 }
 async function load(): Promise<void> {
-  try { cfg.value = await api<Cfg>('/admin/config'); url.value = cfg.value.public_base_url ?? ''; fillCompany(); } catch (e) { error.value = messageFor(e); }
+  try { cfg.value = await api<Cfg>('/admin/config'); url.value = cfg.value.public_base_url ?? ''; fillCompany(); await loadLogo(); } catch (e) { error.value = messageFor(e); }
 }
 async function runCheck(): Promise<void> {
   busy.check = true; error.value = ''; saved.value = ''; check.value = null;
@@ -111,16 +162,25 @@ onMounted(() => { if (isAdmin.value) void load(); });
     </section>
 
     <section v-if="cfg" class="card">
-      <h2>Modelo de documento (DeCA)</h2>
-      <p class="muted">Elige cómo se imprime el DeCA de tu empresa. Todos llevan los mismos datos legales, el QR y las fechas de creación.</p>
-      <div v-for="t in cfg.doc_templates" :key="t.code" class="tpl">
-        <label class="check"><input type="radio" name="tpl" :checked="cfg.doc_template === t.code" @change="saveTemplate({ template: t.code })" /> <b>{{ t.label }}</b></label>
-        <p class="muted small">{{ t.description }}</p>
-        <span class="row"><button class="btn btn-sm" type="button" @click="showTpl(t.code, 'ejemplo', `Ejemplo · ${t.label}`)">Ver ejemplo</button>
-          <button class="btn btn-sm" type="button" @click="showTpl(t.code, 'blanco', `En blanco · ${t.label}`)">Formulario en blanco</button></span>
+      <h2>Documento (DeCA)</h2>
+      <p class="muted">Los DeCA se emiten con el <b>Modelo DECARGO</b>: en fichas y en una sola página, con cabecera con QR, intervinientes, carga y entrega con hora, vehículo y conductor, mercancía y observaciones.</p>
+      <span class="row"><button class="btn btn-sm" type="button" @click="showTpl('ejemplo', 'Ejemplo · Modelo DECARGO')">Ver ejemplo</button>
+        <button class="btn btn-sm" type="button" @click="showTpl('blanco', 'En blanco · Modelo DECARGO')">Formulario en blanco</button></span>
+
+      <h3>Logo de la empresa</h3>
+      <p class="muted small">Sale en la cabecera del DeCA, a la izquierda (el QR va a la derecha). PNG, JPEG, WebP o SVG; mejor con fondo transparente o blanco. Solo cambia los DeCA que se emitan a partir de ahora: los ya emitidos, y sus versiones, conservan el logo con el que se emitieron.</p>
+      <div class="logo-row">
+        <div class="logo-box"><img v-if="logoUrl" :src="logoUrl" alt="Logo de la empresa" /><span v-else class="muted small">Sin logo</span></div>
+        <span class="row">
+          <label class="btn btn-sm" :class="{ disabled: logoBusy }">{{ cfg.logo ? 'Cambiar logo' : 'Subir logo' }}<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style="display: none" :disabled="logoBusy" @change="uploadLogo" /></label>
+          <button v-if="cfg.logo" class="btn btn-sm" type="button" :disabled="logoBusy" @click="removeLogo">Quitar logo</button>
+        </span>
       </div>
+      <p v-if="logoMsg" class="alert alert-ok">{{ logoMsg }}</p>
+
+      <h3>Datos del conductor</h3>
       <label class="check"><input type="checkbox" :checked="cfg.deca_show_driver" @change="saveTemplate({ show_driver: ($event.target as HTMLInputElement).checked })" /> Imprimir en el DeCA los datos del conductor (nombre, DNI y teléfono)</label>
-      <p class="muted small">El DeCA se descarga con su enlace o QR por quien lo recibe: incluir el DNI y el teléfono del conductor es una decisión de la empresa. Por defecto no se imprimen. Solo aplica al modelo «Carta de porte».</p>
+      <p class="muted small">El DeCA se descarga con su enlace o QR por quien lo recibe: incluir el DNI y el teléfono del conductor es una decisión de la empresa. Por defecto no se imprimen.</p>
       <p v-if="tplMsg" class="alert alert-ok">{{ tplMsg }}</p>
     </section>
 

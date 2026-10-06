@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { appendAudit } from '../common/audit';
 import { required } from '../common/config';
-import { docTemplate, getPublicBase, testMode } from '../common/settings';
+import { currentLogo, logoBySha } from '../common/logo';
+import { getPublicBase, testMode } from '../common/settings';
 import { LocalStorage, MAX_PDF_BYTES } from '../common/storage';
 import { decryptToken, encryptToken, newToken, tokenHash } from '../common/token';
 import { ApiError } from '../identity/service';
-import { renderDecaPdf, templateOf } from '../pdf/render';
+import { renderDecaPdf, Template, templateOf } from '../pdf/render';
 import { DecaData } from '../pdf/deca-pdf';
 
 /**
@@ -30,9 +31,10 @@ export async function issueDeca(client: PoolClient, storage: LocalStorage, i: Is
   const token = newToken();
   const url = `${baseUrl}/d/${token}`;
   const now = new Date();
-  const tpl = await docTemplate(client);                      // modelo de documento de la empresa
-  const data = { ...i.data, template: tpl, isTest: i.isTest };
-  const pdf = await renderDecaPdf(tpl, { decaId, versionNo: 1, data, url, createdAt: now, modifiedAt: now, isTest: i.isTest });
+  const tpl: Template = 'DECARGO';                            // los DeCA nuevos se emiten siempre con el Modelo DECARGO
+  const logo = await currentLogo(client);                     // logo vigente de la empresa (queda anotado en el snapshot)
+  const data = { ...i.data, template: tpl, isTest: i.isTest, logoSha256: logo?.sha256 ?? null };
+  const pdf = await renderDecaPdf(tpl, { decaId, versionNo: 1, data, url, createdAt: now, modifiedAt: now, isTest: i.isTest, logo });
   if (pdf.length > MAX_PDF_BYTES) throw new Error('PDF por encima del límite legal');
   const stored = await storage.put(pdf);
 
@@ -64,9 +66,10 @@ export async function addDecaVersion(client: PoolClient, storage: LocalStorage, 
   const url: string = d.public_url ?? `${await getPublicBase(client)}/d/${decryptToken(d.token_enc, required('APP_KEY'))}`;
   const tpl = templateOf(d.snapshot?.template);
   const isTest = typeof d.snapshot?.isTest === 'boolean' ? d.snapshot.isTest : await testMode(client);
-  const data: DecaData = { ...i.data, template: tpl, isTest };
+  const logo = await logoBySha(client, d.snapshot?.logoSha256);   // el mismo logo con el que se emitió (aunque la empresa lo haya cambiado)
+  const data: DecaData = { ...i.data, template: tpl, isTest, logoSha256: logo?.sha256 ?? null };
   const versionNo = d.current_version + 1, now = new Date(), created: Date = d.pdf_created;
-  const pdf = await renderDecaPdf(tpl, { decaId: i.decaId, versionNo, data, url, createdAt: created, modifiedAt: now, isTest });
+  const pdf = await renderDecaPdf(tpl, { decaId: i.decaId, versionNo, data, url, createdAt: created, modifiedAt: now, isTest, logo });
   if (pdf.length > MAX_PDF_BYTES) throw new Error('PDF por encima del límite legal');
   const stored = await storage.put(pdf);
   await client.query(

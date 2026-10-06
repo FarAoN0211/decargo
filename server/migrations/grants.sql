@@ -53,6 +53,7 @@ GRANT USAGE ON SEQUENCE push_event_id_seq TO deca_api;
 -- ===== Ajustes (migración 0007) =====
 GRANT SELECT, INSERT ON app_setting TO deca_api;
 GRANT UPDATE (value, updated_by, updated_at) ON app_setting TO deca_api;
+GRANT SELECT, INSERT ON company_logo TO deca_api;           -- solo se añaden logos: nunca se modifican ni se borran
 
 -- ===== Reemisión de DeCA (el anterior queda SUPERSEDED) =====
 GRANT UPDATE (status) ON deca TO deca_api;
