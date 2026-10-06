@@ -34,7 +34,7 @@ export const mapsLink = (s: { lat: string | number | null; lon: string | number 
   s.lat !== null && s.lon !== null ? `https://www.google.com/maps/dir/?api=1&destination=${Number(s.lat)},${Number(s.lon)}` : s.map_url;
 
 // ----------------------------------------------------------------------------- empresas
-const PARTY_COLS = `p.id, p.name, p.nif, p.address, p.postal_code, p.city, p.province, p.country, p.notes, p.active, p.use_count, p.last_used_at, (SELECT count(*)::int FROM party_site s WHERE s.party_id = p.id AND s.active) AS sites`;
+const PARTY_COLS = `p.id, p.name, p.nif, p.transport_authorization, p.address, p.postal_code, p.city, p.province, p.country, p.notes, p.active, p.use_count, p.last_used_at, (SELECT count(*)::int FROM party_site s WHERE s.party_id = p.id AND s.active) AS sites`;
 const shapeParty = (r: Record<string, any>) => ({ ...r, nif_check: r.nif ? (({ kind, valid }) => ({ kind, valid }))(checkTaxId(r.nif)) : null });
 
 async function companyId(pool: Pool): Promise<string> {
@@ -78,6 +78,7 @@ function partyFields(b: Record<string, unknown>, partial: boolean) {
     else { if (typeof b.nif !== 'string') throw bad('nif'); const n = normTaxId(b.nif); if (!/^[A-Z0-9]{5,16}$/.test(n)) throw bad('nif'); o.nif = n; }
   }
   if (!partial || 'address' in b) o.address = optText(b.address, 'address', 200);
+  if (!partial || 'transport_authorization' in b) { const a = optText(b.transport_authorization, 'transport_authorization', 30); if (a !== null && !/^[A-Za-z0-9 ./-]{3,30}$/.test(a)) throw bad('transport_authorization'); o.transport_authorization = a; }
   for (const k of ['postal_code', 'city', 'province', 'country'] as const) if (!partial || k in b) o[k] = addrParts({ [k]: b[k] }, k)[k];
   if (!partial || 'notes' in b) o.notes = optMultiline(b.notes, 'notes', 500);
   if ('active' in b) { if (typeof b.active !== 'boolean') throw bad('active'); o.active = b.active; }
@@ -94,8 +95,8 @@ export async function createParty(pool: Pool, actor: Actor, b: Record<string, un
       const ex = (await c.query('SELECT id FROM party WHERE company_id = $1 AND nif = $2', [co, f.nif])).rows[0];
       if (ex) throw new ApiError(409, 'party_exists', { id: ex.id });
     }
-    const id = (await c.query(`INSERT INTO party (company_id, name, name_norm, nif, address, postal_code, city, province, country, notes, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) RETURNING id`,
-      [co, f.name, f.name_norm, f.nif, f.address, f.postal_code, f.city, f.province, f.country, f.notes, actorStr(actor)])).rows[0].id;
+    const id = (await c.query(`INSERT INTO party (company_id, name, name_norm, nif, address, postal_code, city, province, country, notes, transport_authorization, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$12,$11,$11) RETURNING id`,
+      [co, f.name, f.name_norm, f.nif, f.address, f.postal_code, f.city, f.province, f.country, f.notes, actorStr(actor), f.transport_authorization ?? null])).rows[0].id;
     await appendAudit(c, { company_id: co, at: new Date(), actor: actorStr(actor), action: 'PARTY_CREATED', entity: 'party', entity_id: id, before: null, after: { name: f.name as string, nif: (f.nif as string) ?? '' }, reason: null });
     await c.query('COMMIT');
     return getParty(pool, id);
@@ -187,18 +188,18 @@ export async function updateSite(pool: Pool, actor: Actor, id: string, b: Record
 // ----------------------------------------------------------------------------- registro automático desde los transportes
 interface Reg { parties: number; sites: number }
 
-type PartyIn = { name: string; nif?: string | null; address?: string | null; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null };
+type PartyIn = { name: string; nif?: string | null; transport_authorization?: string | null; address?: string | null; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null };
 async function upsertParty(c: PoolClient, actor: Actor, co: string, p: PartyIn, reg: Reg): Promise<string> {
   const nif = p.nif ? normTaxId(p.nif) : null;
   const norm = normName(p.name);
   let row = nif ? (await c.query('SELECT id, address FROM party WHERE company_id = $1 AND nif = $2', [co, nif])).rows[0]
                 : (await c.query('SELECT id, address FROM party WHERE company_id = $1 AND name_norm = $2 AND active ORDER BY (nif IS NOT NULL) DESC, created_at LIMIT 1', [co, norm])).rows[0];
   if (row) {
-    await c.query('UPDATE party SET use_count = use_count + 1, last_used_at = now(), address = COALESCE(address, $2), postal_code = COALESCE(postal_code, $3), city = COALESCE(city, $4), province = COALESCE(province, $5), country = COALESCE(country, $6) WHERE id = $1', [row.id, p.address ?? null, p.postal_code ?? null, p.city ?? null, p.province ?? null, p.country ?? null]);   // nunca pisa datos ya guardados
+    await c.query('UPDATE party SET use_count = use_count + 1, last_used_at = now(), address = COALESCE(address, $2), postal_code = COALESCE(postal_code, $3), city = COALESCE(city, $4), province = COALESCE(province, $5), country = COALESCE(country, $6), transport_authorization = COALESCE(transport_authorization, $7) WHERE id = $1', [row.id, p.address ?? null, p.postal_code ?? null, p.city ?? null, p.province ?? null, p.country ?? null, p.transport_authorization ?? null]);   // nunca pisa datos ya guardados
     return row.id;
   }
-  row = (await c.query(`INSERT INTO party (company_id, name, name_norm, nif, address, postal_code, city, province, country, use_count, last_used_at, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,now(),$10,$10) RETURNING id`,
-    [co, p.name, norm, nif, p.address ?? null, p.postal_code ?? null, p.city ?? null, p.province ?? null, p.country ?? null, actorStr(actor)])).rows[0];
+  row = (await c.query(`INSERT INTO party (company_id, name, name_norm, nif, address, postal_code, city, province, country, transport_authorization, use_count, last_used_at, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$11,1,now(),$10,$10) RETURNING id`,
+    [co, p.name, norm, nif, p.address ?? null, p.postal_code ?? null, p.city ?? null, p.province ?? null, p.country ?? null, actorStr(actor), p.transport_authorization ?? null])).rows[0];
   reg.parties++;
   await appendAudit(c, { company_id: co, at: new Date(), actor: actorStr(actor), action: 'PARTY_CREATED', entity: 'party', entity_id: row.id, before: null, after: { name: p.name, nif: nif ?? '', origin: 'transporte' }, reason: null });
   return row.id;

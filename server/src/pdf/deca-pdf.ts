@@ -29,7 +29,15 @@ export interface DecaData {
   priceEur?: string | null;                                      // casilla 6
   packages?: string | null; loadReference?: string | null; temperature?: string | null;   // casilla 12
   driver?: { name: string; nif: string | null; phone: string | null } | null;   // casilla 9 (solo si la empresa lo activa)
-  template?: 'ESTANDAR' | 'CARTA_DE_PORTE';
+  template?: 'DECARGO' | 'ESTANDAR' | 'CARTA_DE_PORTE';
+  // ---- Modelo DECARGO (fichas): datos opcionales; los vacíos no se imprimen
+  reference?: string | null;                                     // referencia corta del transporte (DEC-AAAA-NNNNNN)
+  carrierAuthorization?: string | null;                          // nº de autorización de transporte del transportista efectivo
+  tractorKind?: string | null; trailerKind?: string | null;      // tipo de conjunto (tractora + semirremolque…)
+  units?: number | null; packaging?: string | null;              // número de unidades y tipo de embalaje
+  adr?: { detail: string | null } | null;                        // mercancía peligrosa (ADR)
+  originStops?: Array<{ party: string | null; address: string; time: string | null; pallets: number | null; refs: string[]; seals: string[] }>;
+  destinationStops?: Array<{ party: string | null; address: string; time: string | null; pallets: number | null; refs: string[]; seals: string[] }>;
   isTest?: boolean;                                              // el DeCA se emitió en modo de pruebas (las versiones posteriores lo conservan)
   driver2?: { name: string; nif: string | null; phone: string | null } | null;   // casilla 9.1: conductor efectivo sucesivo
   vehicleChanges?: Array<{ at: string; tractorPlate: string; trailerPlate: string | null }>;   // casilla 8.1: cambios de vehículo (el original queda en la casilla 8)

@@ -37,8 +37,9 @@ interface TransportRow {
   origin: { text: string; stops?: Stop[] }; destination: { text: string; stops?: Stop[] }; cargo_description: string; weight_kg: string | null; alt_magnitude: { text: string } | null;
   aec_ref: string | null; transport_date: string | Date; remarks: string | null;
   price_eur?: string | null; carrier_address?: string | null; packages?: string | null; load_reference?: string | null; temperature?: string | null;
+  reference?: string | null; carrier_authorization?: string | null; units?: number | null; packaging?: string | null; adr?: boolean | null; adr_detail?: string | null;
 }
-interface Extra { companyAddress?: string | null; driver?: DecaData['driver'] }
+interface Extra { companyAddress?: string | null; companyAuthorization?: string | null; driver?: DecaData['driver'] }
 const isoDay = (d: string | Date): string => (typeof d === 'string' ? d.slice(0, 10) : d.toISOString().slice(0, 10));
 
 /** Datos del art. 6 de la Orden FOM/2861/2012 tal como los imprime el generador de PDF real. */
@@ -59,7 +60,13 @@ function decaData(t: TransportRow, v: VehicleSel, x: Extra = {}): DecaData {
     carrier: { name: t.carrier_name, nif: t.carrier_nif },
     origin: t.origin.text, destination: t.destination.text, cargoDescription: t.cargo_description,
     weightKg: t.weight_kg, altMagnitude: t.alt_magnitude?.text ?? null, aecRef: t.aec_ref,
-    transportDate: isoDay(t.transport_date), tractorPlate: v.tractor.plate, trailerPlate: v.trailer?.plate ?? null, remarks: t.remarks
+    transportDate: isoDay(t.transport_date), tractorPlate: v.tractor.plate, trailerPlate: v.trailer?.plate ?? null, remarks: t.remarks,
+    // Modelo DECARGO (fichas)
+    reference: t.reference ?? null, carrierAuthorization: t.carrier_authorization ?? x.companyAuthorization ?? null,
+    tractorKind: v.tractor.kind, trailerKind: v.trailer?.kind ?? null, units: t.units ?? null, packaging: t.packaging ?? null,
+    adr: t.adr ? { detail: t.adr_detail ?? null } : null,
+    originStops: stopsO.map((s) => ({ party: s.party, address: fullAddress(s), time: s.time ?? null, pallets: s.pallets ?? null, refs: s.references ?? [], seals: s.seals ?? [] })),
+    destinationStops: stopsD.map((s) => ({ party: s.party, address: fullAddress(s), time: s.time ?? null, pallets: s.pallets ?? null, refs: s.references ?? [], seals: s.seals ?? [] }))
   };
 }
 
@@ -74,6 +81,7 @@ async function driverForDeca(c: PoolClient, driverId: string | null): Promise<De
 export interface NewTransportInput {
   shipper_name?: unknown; shipper_nif?: unknown; shipper_address?: unknown; origin?: unknown; destination?: unknown; transport_date?: unknown;
   origins?: unknown; destinations?: unknown; carrier_name?: unknown; carrier_nif?: unknown; carrier_address?: unknown; shipper_postal_code?: unknown; shipper_city?: unknown; shipper_province?: unknown; shipper_country?: unknown; carrier_postal_code?: unknown; carrier_city?: unknown; carrier_province?: unknown; carrier_country?: unknown; price_eur?: unknown; packages?: unknown; load_reference?: unknown; temperature?: unknown; cargo?: unknown; weight_kg?: unknown; alt_magnitude?: unknown; aec_ref?: unknown; remarks?: unknown;
+  units?: unknown; packaging?: unknown; adr?: unknown; adr_detail?: unknown; carrier_authorization?: unknown;
   driver_id?: unknown; tractor_id?: unknown; trailer_id?: unknown; generate_deca?: unknown;
 }
 
@@ -95,6 +103,14 @@ export async function createTransport(pool: Pool, storage: LocalStorage, actor: 
   let packages = optText(i.packages, 'packages', 60);
   if (packages && /^\d{1,6}$/.test(packages)) packages = palletsLabel(Number(packages));   // «10» se imprime como «10 palets»
   const loadRef = optText(i.load_reference, 'load_reference', 60), temperature = optText(i.temperature, 'temperature', 60), carrierAddrIn = optText(i.carrier_address, 'carrier_address', 200);
+  // Modelo DECARGO: unidades y embalaje, ADR y autorización del transportista (todo opcional)
+  let units: number | null = null;
+  if (i.units !== undefined && i.units !== null && i.units !== '') { const n = typeof i.units === 'number' ? i.units : Number(String(i.units).trim()); if (!Number.isInteger(n) || n < 0 || n > 999999) throw bad('units'); units = n; }
+  const packaging = optText(i.packaging, 'packaging', 40);
+  if (i.adr !== undefined && i.adr !== null && typeof i.adr !== 'boolean') throw bad('adr');
+  const adr = i.adr === true, adrDetail = adr ? optText(i.adr_detail, 'adr_detail', 120) : null;
+  const carrierAuthIn = optText(i.carrier_authorization, 'carrier_authorization', 30);
+  if (!packages && units !== null) packages = `${units} ${packaging ?? (units === 1 ? 'bulto' : 'bultos')}`;   // «Nº y clase de bultos» de la carta de porte
   const loadedPallets = palletsTotal(originStops);
   if (!packages && loadedPallets) packages = palletsLabel(loadedPallets);     // casilla 12: si no se indican los bultos, se usa el total de palets cargados
   let price: string | null = null;
@@ -111,7 +127,7 @@ export async function createTransport(pool: Pool, storage: LocalStorage, actor: 
   const c = await pool.connect();
   try {
     await c.query('BEGIN');
-    const co = (await c.query('SELECT id, name, nif, address, postal_code, city, province, country FROM company ORDER BY created_at LIMIT 1')).rows[0];
+    const co = (await c.query('SELECT id, name, nif, address, postal_code, city, province, country, transport_authorization FROM company ORDER BY created_at LIMIT 1')).rows[0];
     if (!co) throw new ApiError(409, 'no_company');
     // b) Transportista efectivo: por defecto la empresa, pero puede ser otro (DECARGO es una plataforma: la responsabilidad del dato es de quien lo introduce).
     const hasCarrier = (i.carrier_name !== undefined && i.carrier_name !== null && i.carrier_name !== '') || (i.carrier_nif !== undefined && i.carrier_nif !== null && i.carrier_nif !== '');
@@ -124,16 +140,20 @@ export async function createTransport(pool: Pool, storage: LocalStorage, actor: 
     }
     const veh = await checkVehicles(c, tractorId, trailerId);
     // Agenda: las empresas y lugares que no estén guardados se registran para la próxima vez y el transporte queda enlazado a ellos.
-    const registered = await registerForTransport(c, actor, co.id, { shipper: { name: shipper.name, nif: shipper.nif, address: shipper.street, postal_code: shipper.postal_code, city: shipper.city, province: shipper.province, country: shipper.country }, carrier: hasCarrier ? { ...carrier, address: carrierAddrIn, ...carrierParts } : null, origins: originStops, destinations: destStops });
+    const registered = await registerForTransport(c, actor, co.id, { shipper: { name: shipper.name, nif: shipper.nif, address: shipper.street, postal_code: shipper.postal_code, city: shipper.city, province: shipper.province, country: shipper.country }, carrier: hasCarrier ? { ...carrier, address: carrierAddrIn, ...carrierParts, transport_authorization: carrierAuthIn } : null, origins: originStops, destinations: destStops });
     originJ.text = stopsText(originStops); destJ.text = stopsText(destStops);   // con lo completado desde la agenda
     // casillas 3 y 4: cada lugar necesita su localidad (escrita o deducible de la dirección); nunca se imprime la calle
     for (const [l, f] of [[originStops, 'origins'], [destStops, 'destinations']] as const) if (l.some((x) => !placeFrom(x))) throw new ApiError(400, 'localidad_requerida', { field: f });
     const t = (await c.query(
       `INSERT INTO transport (company_id, shipper_name, shipper_nif, shipper_address, carrier_name, carrier_nif, origin, destination,
-         cargo_description, weight_kg, alt_magnitude, aec_ref, transport_date, remarks, price_eur, carrier_address, packages, load_reference, temperature)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
+         cargo_description, weight_kg, alt_magnitude, aec_ref, transport_date, remarks, price_eur, carrier_address, packages, load_reference, temperature,
+         reference, carrier_authorization, units, packaging, adr, adr_detail)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+         'DEC-' || to_char(now() AT TIME ZONE 'Europe/Madrid', 'YYYY') || '-' || lpad(nextval('transport_reference_seq')::text, 6, '0'), $20, $21, $22, $23, $24)
+       RETURNING id, reference`,
       [co.id, shipper.name, shipper.nif, shipper.address, carrier.name, carrier.nif, JSON.stringify(originJ), JSON.stringify(destJ),
-       cargo, weight, alt ? JSON.stringify({ text: alt }) : null, aec, date, remarks, price, carrierAddress, packages, loadRef, temperature])).rows[0];
+       cargo, weight, alt ? JSON.stringify({ text: alt }) : null, aec, date, remarks, price, carrierAddress, packages, loadRef, temperature,
+       hasCarrier ? carrierAuthIn : null, units, packaging, adr || null, adrDetail])).rows[0];
     if (veh.tractor) await c.query('INSERT INTO transport_vehicle_assignment (transport_id, tractor_id, trailer_id, reason) VALUES ($1,$2,$3,$4)', [t.id, veh.tractor.id, veh.trailer?.id ?? null, 'Asignación inicial']);
     if (driverId) {
       await c.query('INSERT INTO transport_driver_assignment (transport_id, driver_user_id, created_by) VALUES ($1,$2,$3)', [t.id, driverId, actorStr(actor)]);
@@ -145,11 +165,12 @@ export async function createTransport(pool: Pool, storage: LocalStorage, actor: 
     if (generate) {
       const row: TransportRow = { shipper_name: shipper.name, shipper_nif: shipper.nif, shipper_address: shipper.address, carrier_name: carrier.name, carrier_nif: carrier.nif,
         origin: originJ, destination: destJ, cargo_description: cargo, weight_kg: weight, alt_magnitude: alt ? { text: alt } : null, aec_ref: aec, transport_date: date, remarks,
-        price_eur: price, carrier_address: carrierAddress, packages, load_reference: loadRef, temperature };
-      deca = await issueDeca(c, storage, { companyId: co.id, transportId: t.id, data: decaData(row, veh, { companyAddress: fullAddress(co), driver: await driverForDeca(c, driverId) }), actor: actorStr(actor), reason: 'alta de transporte', isTest: await testMode(c) });
+        price_eur: price, carrier_address: carrierAddress, packages, load_reference: loadRef, temperature,
+        reference: t.reference, carrier_authorization: hasCarrier ? carrierAuthIn : null, units, packaging, adr, adr_detail: adrDetail };
+      deca = await issueDeca(c, storage, { companyId: co.id, transportId: t.id, data: decaData(row, veh, { companyAddress: fullAddress(co), companyAuthorization: co.transport_authorization ?? null, driver: await driverForDeca(c, driverId) }), actor: actorStr(actor), reason: 'alta de transporte', isTest: await testMode(c) });
     }
     await c.query('COMMIT');
-    return { id: t.id, deca_id: deca?.deca_id ?? null, registered };
+    return { id: t.id, reference: t.reference, deca_id: deca?.deca_id ?? null, registered };
   } catch (e) { try { await c.query('ROLLBACK'); } catch { /* */ } throw e; } finally { c.release(); }
 }
 
@@ -170,9 +191,9 @@ export async function generateDecaForTransport(pool: Pool, storage: LocalStorage
        WHERE a.transport_id = $1 AND a.valid_to IS NULL`, [transportId])).rows[0];
     if (!a) throw new ApiError(409, 'vehicle_required');
     const veh: VehicleSel = { tractor: { id: a.tid, plate: a.tplate, kind: a.tkind }, trailer: a.rid ? { id: a.rid, plate: a.rplate, kind: a.rkind } : null };
-    const co2 = (await c.query('SELECT address, postal_code, city, province, country FROM company WHERE id = $1', [t.company_id])).rows[0];
+    const co2 = (await c.query('SELECT address, postal_code, city, province, country, transport_authorization FROM company WHERE id = $1', [t.company_id])).rows[0];
     const dr = (await c.query('SELECT driver_user_id FROM transport_driver_assignment WHERE transport_id = $1 AND valid_to IS NULL', [transportId])).rows[0];
-    const deca = await issueDeca(c, storage, { companyId: t.company_id, transportId, data: decaData({ ...t, transport_date: t.d_txt }, veh, { companyAddress: co2 ? fullAddress(co2) : null, driver: await driverForDeca(c, dr?.driver_user_id ?? null) }), actor: actorStr(actor), reason: 'emisión posterior al alta', isTest: await testMode(c) });
+    const deca = await issueDeca(c, storage, { companyId: t.company_id, transportId, data: decaData({ ...t, transport_date: t.d_txt }, veh, { companyAddress: co2 ? fullAddress(co2) : null, companyAuthorization: co2?.transport_authorization ?? null, driver: await driverForDeca(c, dr?.driver_user_id ?? null) }), actor: actorStr(actor), reason: 'emisión posterior al alta', isTest: await testMode(c) });
     await c.query('COMMIT');
     return deca;
   } catch (e) { try { await c.query('ROLLBACK'); } catch { /* */ } throw e; } finally { c.release(); }
@@ -202,7 +223,7 @@ export async function setVehicles(pool: Pool, actor: Actor, transportId: string,
 }
 
 const LIST_SQL = `
-  SELECT t.id, t.status, t.transport_date::text AS transport_date, t.shipper_name, replace(t.origin->>'text', E'\n', ' · ') AS origin, replace(t.destination->>'text', E'\n', ' · ') AS destination, t.cargo_description AS cargo,
+  SELECT t.id, t.reference, t.status, t.transport_date::text AS transport_date, t.shipper_name, replace(t.origin->>'text', E'\n', ' · ') AS origin, replace(t.destination->>'text', E'\n', ' · ') AS destination, t.cargo_description AS cargo,
          d.id AS deca_id, a.driver_user_id, u.full_name AS driver_name, vt.plate_display AS tractor, vr.plate_display AS trailer
   FROM transport t
   LEFT JOIN deca_transport dt ON dt.transport_id = t.id AND EXISTS (SELECT 1 FROM deca x WHERE x.id = dt.deca_id AND x.status = 'ACTIVE') LEFT JOIN deca d ON d.id = dt.deca_id
@@ -240,6 +261,7 @@ export async function getTransportDetail(pool: Pool, id: string) {
     origin: t.origin.text, destination: t.destination.text,
     origins: await resolveStops(pool, t.origin.stops ?? [{ party: null, address: t.origin.text }]), destinations: await resolveStops(pool, t.destination.stops ?? [{ party: null, address: t.destination.text }]), cargo: t.cargo_description, weight_kg: t.weight_kg, alt_magnitude: t.alt_magnitude?.text ?? null,
     aec_ref: t.aec_ref, remarks: t.remarks, price_eur: t.price_eur, packages: t.packages, load_reference: t.load_reference, temperature: t.temperature, carrier_address: t.carrier_address,
+    reference: t.reference, carrier_authorization: t.carrier_authorization, units: t.units, packaging: t.packaging, adr: t.adr === true, adr_detail: t.adr_detail,
     driver: t.driver_user_id ? { id: t.driver_user_id, username: t.driver_username, full_name: t.driver_name } : null,
     vehicles: t.tractor_id ? { tractor: { id: t.tractor_id, plate: t.tractor, kind: t.tractor_kind }, trailer: t.trailer_id ? { id: t.trailer_id, plate: t.trailer, kind: t.trailer_kind } : null } : null,
     deca: t.deca_id ? {
@@ -298,7 +320,7 @@ export async function syncDriverIntoDeca(pool: Pool, storage: LocalStorage, acto
     await c.query('BEGIN');
     const t = (await c.query('SELECT status FROM transport WHERE id = $1', [transportId])).rows[0];
     const deca = t && OPEN.includes(t.status) ? await activeDeca(c, transportId) : undefined;
-    if (!deca || deca.snapshot.template !== 'CARTA_DE_PORTE') { await c.query('ROLLBACK'); return null; }
+    if (!deca || (deca.snapshot.template !== 'CARTA_DE_PORTE' && deca.snapshot.template !== 'DECARGO')) { await c.query('ROLLBACK'); return null; }   // los modelos que imprimen el conductor
     const a = (await c.query('SELECT driver_user_id FROM transport_driver_assignment WHERE transport_id = $1 AND valid_to IS NULL', [transportId])).rows[0];
     const info = await driverForDeca(c, a?.driver_user_id ?? null);
     if (!info) { await c.query('ROLLBACK'); return null; }

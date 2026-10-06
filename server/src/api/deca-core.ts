@@ -6,8 +6,8 @@ import { docTemplate, getPublicBase, testMode } from '../common/settings';
 import { LocalStorage, MAX_PDF_BYTES } from '../common/storage';
 import { decryptToken, encryptToken, newToken, tokenHash } from '../common/token';
 import { ApiError } from '../identity/service';
-import { generateCartaPdf } from '../pdf/carta-pdf';
-import { DecaData, generateDecaPdf } from '../pdf/deca-pdf';
+import { renderDecaPdf, templateOf } from '../pdf/render';
+import { DecaData } from '../pdf/deca-pdf';
 
 /**
  * Núcleo ÚNICO de emisión de un DeCA: token, URL, PDF (generador real), almacén, hash, filas y auditoría.
@@ -32,7 +32,7 @@ export async function issueDeca(client: PoolClient, storage: LocalStorage, i: Is
   const now = new Date();
   const tpl = await docTemplate(client);                      // modelo de documento de la empresa
   const data = { ...i.data, template: tpl, isTest: i.isTest };
-  const pdf = await (tpl === 'CARTA_DE_PORTE' ? generateCartaPdf : generateDecaPdf)({ decaId, versionNo: 1, data, url, createdAt: now, modifiedAt: now, isTest: i.isTest });
+  const pdf = await renderDecaPdf(tpl, { decaId, versionNo: 1, data, url, createdAt: now, modifiedAt: now, isTest: i.isTest });
   if (pdf.length > MAX_PDF_BYTES) throw new Error('PDF por encima del límite legal');
   const stored = await storage.put(pdf);
 
@@ -62,11 +62,11 @@ export async function addDecaVersion(client: PoolClient, storage: LocalStorage, 
      FROM deca d JOIN deca_version v ON v.deca_id = d.id AND v.version_no = d.current_version WHERE d.id = $1`, [i.decaId])).rows[0];
   if (!d || d.status !== 'ACTIVE') throw new ApiError(409, 'deca_no_vigente');
   const url: string = d.public_url ?? `${await getPublicBase(client)}/d/${decryptToken(d.token_enc, required('APP_KEY'))}`;
-  const tpl = (d.snapshot?.template === 'CARTA_DE_PORTE' ? 'CARTA_DE_PORTE' : 'ESTANDAR') as 'ESTANDAR' | 'CARTA_DE_PORTE';
+  const tpl = templateOf(d.snapshot?.template);
   const isTest = typeof d.snapshot?.isTest === 'boolean' ? d.snapshot.isTest : await testMode(client);
   const data: DecaData = { ...i.data, template: tpl, isTest };
   const versionNo = d.current_version + 1, now = new Date(), created: Date = d.pdf_created;
-  const pdf = await (tpl === 'CARTA_DE_PORTE' ? generateCartaPdf : generateDecaPdf)({ decaId: i.decaId, versionNo, data, url, createdAt: created, modifiedAt: now, isTest });
+  const pdf = await renderDecaPdf(tpl, { decaId: i.decaId, versionNo, data, url, createdAt: created, modifiedAt: now, isTest });
   if (pdf.length > MAX_PDF_BYTES) throw new Error('PDF por encima del límite legal');
   const stored = await storage.put(pdf);
   await client.query(

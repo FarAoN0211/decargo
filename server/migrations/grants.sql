@@ -92,3 +92,7 @@ GRANT UPDATE (retain_not_before) ON deca TO deca_api;                         --
 
 -- ===== Relevo de conductores (migración 0017) =====
 GRANT SELECT, INSERT, DELETE ON transport_relay TO deca_api;
+
+-- ===== Modelo DECARGO: autorización de transporte y referencia (migración 0018) =====
+GRANT UPDATE (transport_authorization) ON company, party TO deca_api;
+GRANT USAGE, SELECT ON SEQUENCE transport_reference_seq TO deca_api;

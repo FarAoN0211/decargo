@@ -35,7 +35,7 @@ onMounted(load);
       <thead><tr><th>Fecha</th><th>Estado</th><th>Ruta</th><th>Cargador</th><th>Conductor</th><th>Vehículo</th><th>DeCA</th></tr></thead>
       <tbody>
         <tr v-for="t in rows" :key="t.id" class="link" tabindex="0" @click="router.push(`/oficina/transportes/${t.id}`)" @keydown.enter="router.push(`/oficina/transportes/${t.id}`)">
-          <td class="nowrap">{{ fmtDate(t.transport_date) }}</td>
+          <td class="nowrap">{{ fmtDate(t.transport_date) }}<div v-if="t.reference" class="muted small mono">{{ t.reference }}</div></td>
           <td><StatusBadge :status="t.status" /></td>
           <td>{{ t.origin }}<br /><span class="muted small">→ {{ t.destination }}</span></td>
           <td>{{ t.shipper_name }}</td>

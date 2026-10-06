@@ -3,12 +3,12 @@ import { lookup } from 'node:dns/promises';
 import type { Pool } from 'pg';
 import { appendAudit } from '../common/audit';
 import { optional } from '../common/config';
-import { generateCartaPdf } from '../pdf/carta-pdf';
-import { generateDecaPdf, type DecaData } from '../pdf/deca-pdf';
+import { renderDecaPdf, templateOf } from '../pdf/render';
+import { type DecaData } from '../pdf/deca-pdf';
 import { DOC_TEMPLATES, docTemplate, showDriverInDeca, FLAG_KEYS, PUBLIC_BASE_KEY, devEndpoints, flagSource, foodTransport, getPublicBase, normalizePublicBase, publicBaseSource, testMode, warnDays } from '../common/settings';
 import { isPublicAddress } from '../external/netpolicy';
 import { Actor, ApiError, actorStr } from '../identity/service';
-import { addrParts, bad, nif, text } from './validate';
+import { addrParts, bad, nif, optText, text } from './validate';
 import { FCM_CLIENT_KEY, FCM_PACKAGE, FCM_SERVICE_KEY, accessToken, encryptServiceAccount, fcmClient, fcmReady, parseGoogleServices, parseServiceAccount } from '../identity/fcm';
 
 /** Configuración de la instalación visible para el administrador (nunca devuelve secretos). */
@@ -24,7 +24,7 @@ export async function getConfig(pool: Pool) {
     dev_endpoints: await devEndpoints(pool), dev_endpoints_available: !!process.env.DEV_API_KEY,
     doc_template: await docTemplate(pool), doc_templates: DOC_TEMPLATES, deca_show_driver: await showDriverInDeca(pool),
     food_transport: await foodTransport(pool), expiry_warn_days: await warnDays(pool),
-    company: (await pool.query('SELECT name, nif, address, postal_code, city, province, country FROM company ORDER BY created_at LIMIT 1')).rows[0] ?? null,
+    company: (await pool.query('SELECT name, nif, address, postal_code, city, province, country, transport_authorization FROM company ORDER BY created_at LIMIT 1')).rows[0] ?? null,
     push_configured: !!process.env.VAPID_PUBLIC_KEY && !!process.env.VAPID_PRIVATE_KEY,
     fcm: await fcmInfo(pool),
     decas_total: total, decas_other_base: other
@@ -109,14 +109,17 @@ export async function setFlags(pool: Pool, actor: Actor, body: Record<string, un
 /** Datos de la empresa = transportista efectivo por defecto de todos los transportes y DeCA NUEVOS. Los ya emitidos conservan los suyos. */
 export async function setCompany(pool: Pool, actor: Actor, body: Record<string, unknown>) {
   const name = text(body.name, 'name', 2, 120), nifV = nif(body.nif, 'nif'), address = text(body.address, 'address', 5, 200), ap = addrParts(body, 'city');
+  // Nº de autorización de transporte (MDP / Registro de Empresas y Actividades de Transporte): opcional; se imprime en el Modelo DECARGO.
+  const auth = optText(body.transport_authorization, 'transport_authorization', 30);
+  if (auth !== null && !/^[A-Za-z0-9 ./-]{3,30}$/.test(auth)) throw bad('transport_authorization');
   const c = await pool.connect();
   try {
     await c.query('BEGIN');
     const before = (await c.query('SELECT id, name, nif, address, postal_code, city, province, country FROM company ORDER BY created_at LIMIT 1')).rows[0];
     if (!before) throw new ApiError(409, 'no_company');
-    await c.query('UPDATE company SET name = $2, nif = $3, address = $4, postal_code = $5, city = $6, province = $7, country = $8 WHERE id = $1', [before.id, name, nifV, address, ap.postal_code, ap.city, ap.province, ap.country]);
+    await c.query('UPDATE company SET name = $2, nif = $3, address = $4, postal_code = $5, city = $6, province = $7, country = $8, transport_authorization = $9 WHERE id = $1', [before.id, name, nifV, address, ap.postal_code, ap.city, ap.province, ap.country, auth]);
     await appendAudit(c, { company_id: before.id, at: new Date(), actor: actorStr(actor), action: 'COMPANY_UPDATED', entity: 'company', entity_id: before.id,
-      before: { name: before.name, nif: before.nif, address: before.address, city: before.city ?? '' }, after: { name, nif: nifV, address, city: ap.city ?? '' }, reason: null });
+      before: { name: before.name, nif: before.nif, address: before.address, city: before.city ?? '' }, after: { name, nif: nifV, address, city: ap.city ?? '', authorization: auth ?? '' }, reason: null });
     await c.query('COMMIT');
   } catch (e) { try { await c.query('ROLLBACK'); } catch { /* */ } throw e; } finally { c.release(); }
   return getConfig(pool);
@@ -171,14 +174,18 @@ export async function templatePreview(pool: Pool, templateRaw: unknown, modeRaw:
   const sample: DecaData = {
     shipper: { name: 'CARGADOR DE EJEMPLO S.A.', nif: 'A00000000', address: 'Polígono Ejemplo, nave 2, 04700 El Ejido' }, carrier: { name: co.name, nif: co.nif }, carrierAddress: co.address,
     origin: 'Almacén de ejemplo, El Ejido', destination: 'Centro logístico de ejemplo, 28042 Madrid', originPlaces: ['El Ejido'], destinationPlaces: ['Madrid'],
-    consignees: [{ name: 'DESTINATARIO DE EJEMPLO S.L.', address: 'Calle Quebec 8, Centro de Carga Aérea, 28042 Madrid' }],
+
     cargoDescription: 'Mercancía general', weightKg: '10575.50', altMagnitude: null, aecRef: null, packages: '21 palets', loadReference: '616918', temperature: 'Sin temperatura', priceEur: null,
-    transportDate: now.toISOString().slice(0, 10), tractorPlate: '0000 BBB', trailerPlate: 'R-0000-BBB', remarks: 'Datos de ejemplo.', driver: { name: 'CONDUCTOR DE EJEMPLO', nif: '00000000T', phone: '600000000' }
+    transportDate: now.toISOString().slice(0, 10), tractorPlate: '0000 BBB', trailerPlate: 'R-0000-BBB', remarks: 'Datos de ejemplo.', driver: { name: 'CONDUCTOR DE EJEMPLO', nif: '00000000T', phone: '600000000' },
+    reference: 'DEC-2026-000001', carrierAuthorization: '00000000', tractorKind: 'TRACTORA', trailerKind: 'SEMIRREMOLQUE', units: 21, packaging: 'Europalet', adr: null,
+    originStops: [{ party: 'CARGADOR DE EJEMPLO S.A.', address: 'Polígono Ejemplo, nave 2, 04700 El Ejido (Almería)', time: '08:00', pallets: 21, refs: ['616918'], seals: [] }],
+    destinationStops: [{ party: 'DESTINATARIO DE EJEMPLO S.L.', address: 'Calle Quebec 8, 28042 Madrid', time: '16:30', pallets: 21, refs: [], seals: ['PR-000001'] }],
+    consignees: [{ name: 'DESTINATARIO DE EJEMPLO S.L.', address: 'Calle Quebec 8, 28042 Madrid', nif: 'B00000000' }]
   };
   const empty: DecaData = { shipper: { name: '', nif: '', address: '' }, carrier: { name: '', nif: '' }, origin: '', destination: '', cargoDescription: '', weightKg: null, altMagnitude: null, aecRef: null, transportDate: now.toISOString().slice(0, 10), tractorPlate: '', trailerPlate: null, remarks: null };
   const input = { decaId: '00000000-0000-4000-8000-000000000000', versionNo: 1, data: blank ? { ...empty, consignees: [] } : sample, url: 'https://ejemplo.invalid/d/EJEMPLO', createdAt: now, modifiedAt: now, isTest: false, blank,
     banner: blank ? undefined : 'MODELO DE EJEMPLO · SIN VALOR · DECARGO' };
-  return templateRaw === 'CARTA_DE_PORTE' ? generateCartaPdf(input) : generateDecaPdf(input);
+  return renderDecaPdf(templateOf(templateRaw), input);
 }
 
 /** Estado de los avisos de la app Android (Firebase): nunca devuelve la clave privada. */

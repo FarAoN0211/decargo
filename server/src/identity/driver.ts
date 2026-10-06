@@ -26,7 +26,7 @@ async function docsUrl(pool: Pool, tokenEnc: string): Promise<string> {
 }
 
 const SELECT = `
-  SELECT t.id, t.status, t.transport_date::text AS transport_date, t.shipper_name, t.origin, t.destination, t.cargo_description, t.weight_kg, t.alt_magnitude,
+  SELECT t.id, t.reference, t.status, t.transport_date::text AS transport_date, t.shipper_name, t.origin, t.destination, t.cargo_description, t.weight_kg, t.alt_magnitude,
          d.id AS deca_id, d.current_version, d.token_enc, d.public_url, d.created_at AS deca_created, v.sha256,
          vt.plate_display AS tractor, vt.kind AS tractor_kind, vr.plate_display AS trailer, vr.kind AS trailer_kind,
          (SELECT u.full_name FROM transport_relay r JOIN app_user u ON u.id = r.driver_user_id WHERE r.transport_id = t.id) AS relay_name
@@ -40,7 +40,7 @@ const SELECT = `
 
 function shape(r: Record<string, any>) {
   return {
-    id: r.id, status: r.status, transport_date: r.transport_date, shipper: r.shipper_name,
+    id: r.id, reference: r.reference ?? null, status: r.status, transport_date: r.transport_date, shipper: r.shipper_name,
     origin: r.origin?.text ?? null, destination: r.destination?.text ?? null, cargo: r.cargo_description, weight_kg: r.weight_kg,
     alt_magnitude: r.alt_magnitude?.text ?? null,
     vehicles: r.tractor ? { tractor: r.tractor, trailer: r.trailer ?? null } : null,
@@ -53,7 +53,7 @@ function shape(r: Record<string, any>) {
 /** Puntos de carga/descarga con «Cómo llegar» e indicaciones tomados de la agenda (datos actuales). Solo lo que necesita el conductor. */
 async function driverStops(pool: Pool, j: { text?: string; stops?: any[] } | null) {
   const stops = j?.stops ?? (j?.text ? [{ party: null, address: j.text }] : []);
-  return (await resolveStops(pool, stops)).map((s) => ({ party: s.party, address: fullAddress(s), label: s.label, maps_url: s.maps_url, notes: s.site_notes, pallets: s.pallets ?? null, references: s.references ?? [], seals: s.seals ?? [] }));
+  return (await resolveStops(pool, stops)).map((s) => ({ party: s.party, address: fullAddress(s), label: s.label, maps_url: s.maps_url, notes: s.site_notes, time: s.time ?? null, pallets: s.pallets ?? null, references: s.references ?? [], seals: s.seals ?? [] }));
 }
 const withStops = async (pool: Pool, r: Record<string, any>) => ({ ...shape(r), origins: await driverStops(pool, r.origin), destinations: await driverStops(pool, r.destination) });
 

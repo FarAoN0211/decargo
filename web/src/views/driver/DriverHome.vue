@@ -126,11 +126,12 @@ watch(() => route.query.t, () => { void load(); });   // al pulsar «Ver transpo
 
       <p v-else-if="!current" class="d-card">No tienes transportes asignados.</p>
       <section v-else class="d-card" aria-label="Transporte actual">
-        <div class="d-label">Transporte actual</div>
+        <div class="d-label">Transporte actual<span v-if="current.reference" class="mono"> · {{ current.reference }}</span></div>
         <div class="d-route"><span class="pt">{{ current.origin }}</span><span class="arrow">↓</span><span class="pt">{{ current.destination }}</span></div>
         <div v-for="(grp, gi) in [{ t: 'Carga', l: current.origins }, { t: 'Descarga', l: current.destinations }]" :key="gi">
           <template v-for="(s, i) in grp.l" :key="i">
             <a v-if="s.maps_url" class="btn btn-accent d-way" :href="s.maps_url" target="_blank" rel="noopener noreferrer">Cómo llegar · {{ grp.t }}{{ grp.l.length > 1 ? ' ' + (i + 1) : '' }}{{ s.party ? ' · ' + s.party : '' }}</a>
+            <p v-if="s.time" class="small"><b>{{ grp.t }}{{ grp.l.length > 1 ? ' ' + (i + 1) : '' }}: a las {{ s.time }}</b></p>
             <p v-if="s.pallets !== null && s.pallets !== undefined" class="small"><b>{{ grp.t }}{{ grp.l.length > 1 ? ' ' + (i + 1) : '' }}{{ s.party ? ' · ' + s.party : '' }}: {{ s.pallets }} {{ s.pallets === 1 ? 'palet' : 'palets' }}</b></p>
             <p v-if="s.references?.length || s.seals?.length" class="small"><template v-if="s.references?.length">{{ s.references.length > 1 ? 'Referencias' : 'Referencia' }}: <b>{{ s.references.join(', ') }}</b></template><template v-if="s.references?.length && s.seals?.length"> · </template><template v-if="s.seals?.length">{{ s.seals.length > 1 ? 'Precintos' : 'Precinto' }}: <b>{{ s.seals.join(', ') }}</b></template></p>
             <p v-if="s.notes" class="small muted">{{ grp.t }}{{ s.label ? ' · ' + s.label : '' }}: {{ s.notes }}</p>

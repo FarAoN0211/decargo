@@ -655,7 +655,7 @@ async function run() {
   const tcar = await call('POST', '/api/v1/transports', { token: O, body: tbody({ carrier_name: `TRANSPORTES EFECTIVOS ${SFX} S.L.`, carrier_nif: 'B87654321', cargo: `Subcontratado ${sfx}`, driver_id: undefined }) });
   const dcar = tcar.status === 201 ? await call('GET', `/api/v1/transports/${tcar.json.id}`, { token: O }) : null;
   check(tcar.status === 201 && dcar.json.carrier.name === `TRANSPORTES EFECTIVOS ${SFX} S.L.` && dcar.json.carrier.nif === 'B87654321', 'el transportista efectivo puede ser otra empresa distinta de la propia (se guarda en el transporte)', `${tcar.status}`);
-  const pcar = pdfText((await call('GET', `/api/v1/decas/${tcar.json.deca_id}/versions/1/pdf`, { token: O })).buf);
+  const pcar = pdfRaw((await call('GET', `/api/v1/decas/${tcar.json.deca_id}/versions/1/pdf`, { token: O })).buf);
   check(pcar.includes(`TRANSPORTES EFECTIVOS ${SFX} S.L.`) && pcar.includes('B87654321'), 'y el PDF imprime ese transportista (no el de la empresa)');
   check(det.json.carrier.name !== dcar.json.carrier.name, 'sin indicarlo, el transportista sigue siendo la empresa propia');
   const t2 = nTr();
@@ -1114,7 +1114,7 @@ async function run() {
   info('16.17 Modelo de documento: carta de porte');
   const TPL = (tok, body) => http('PUT', '/api/v1/admin/config/template', { token: tok, body });
   const cfgT = (await http('GET', '/api/v1/admin/config', { token: AD2 })).json;
-  check(cfgT.doc_template === 'ESTANDAR' && cfgT.doc_templates.length === 2 && cfgT.deca_show_driver === false, 'por defecto se usa el modelo DECARGO y no se imprimen los datos del conductor');
+  check(cfgT.doc_template === 'DECARGO' && cfgT.doc_templates.length === 3 && cfgT.doc_templates[0].code === 'DECARGO' && cfgT.deca_show_driver === false, 'por defecto se usa el Modelo DECARGO (fichas) y no se imprimen los datos del conductor');
   check([await TPL(undefined, { template: 'CARTA_DE_PORTE' }), await TPL(O, { template: 'CARTA_DE_PORTE' }), await TPL(ro16.tok, { template: 'CARTA_DE_PORTE' }), await TPL(dA.tok, { template: 'CARTA_DE_PORTE' })].map((r) => r.status).join() === '401,403,403,403', 'cambiar el modelo: solo el administrador (sin sesión 401; oficina, solo_lectura y conductor 403)');
   check((await TPL(AD2, { template: 'OTRO' })).status === 400 && (await TPL(AD2, { show_driver: 'si' })).status === 400 && (await TPL(AD2, {})).status === 400, 'modelo inexistente, valor no booleano o petición vacía → 400');
   const prv = (tok, template, mode) => fetch(`${API()}/api/v1/admin/config/template-preview?template=${template}&mode=${mode}`, { headers: tok ? { authorization: `Bearer ${tok}` } : {} });
@@ -1501,6 +1501,46 @@ async function run() {
   check(Number(psql(`SELECT count(*) FROM audit_log WHERE action = 'VEHICLE_ASSET_PIN_REVEALED' AND entity_id = '${pinT.json.id}'`)) === auditPin0 + 1 && !JSON.stringify((await http('GET', '/api/v1/driver/transports', { token: dA24 })).json).includes('kP4wR8'), 'cada consulta del PIN queda auditada y el PIN nunca va en la lista de transportes');
   check((await CARDS(dB24, pinT.json.id)).status === 404 && (await CARDS(O, pinT.json.id)).status === 403 && (await CARDS(undefined, pinT.json.id)).status === 401 && (await CARDS(pendB.json.access_token, pinT.json.id)).status === 403, 'PIN: otro conductor 404; oficina por esta vía 403; sin sesión 401; dispositivo pendiente 403');
   check(!execFileSync('docker', ['compose', 'logs', '--no-color', 'api', 'web'], { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 }).includes('kP4wR8'), 'el PIN no aparece en los registros de la API ni de la web');
+
+  // ---- 16.25 Modelo DECARGO (fichas, una página) y datos nuevos: referencia, autorización, unidades, embalaje, horas y ADR
+  info('16.25 Modelo DECARGO y datos nuevos');
+  const pages = (buf) => Number((inTools('doc.pdf', buf, 'pdfinfo', '{f}').match(/Pages:\s+(\d+)/) || [])[1]);
+  await TPL(AD2, { template: 'DECARGO', show_driver: true });
+  const coA = (await http('GET', '/api/v1/admin/config', { token: AD2 })).json.company;
+  const coAuth = await http('PUT', '/api/v1/admin/config/company', { token: AD2, body: { ...coA, transport_authorization: '11551548' } });
+  check(coAuth.status === 200 && coAuth.json.company.transport_authorization === '11551548' && (await http('PUT', '/api/v1/admin/config/company', { token: AD2, body: { ...coA, transport_authorization: '¡¡' } })).status === 400, 'Configuración guarda el nº de autorización de transporte de la empresa (formato inválido → 400)');
+  const fb = (o = {}) => tb({ cargo: `Envases vacíos ${sfx}`, driver_id: dA.id, units: 14, packaging: 'Europalet no retornable', adr: true, adr_detail: 'UN 1203, 3, II (D/E)', temperature: '+2 a +6', remarks: 'Observación de prueba',
+    origins: [{ party: 'IFCO Prueba S.L.', address: 'Ctra. Alicún 1', postal_code: '04740', city: 'Roquetas de Mar', province: 'Almería', time: '08:30', pallets: 14, references: 'IF-0001' }],
+    destinations: [{ party: 'Envases Destino S.L.', address: 'Polígono Guadiel 144', postal_code: '23210', city: 'Guarromán', province: 'Jaén', time: '17:45', seals: 'PR-5555' }], ...o });
+  const f1 = await call('POST', '/api/v1/transports', { token: O, body: fb() });
+  const f1d = (await call('GET', `/api/v1/transports/${f1.json.id}`, { token: O })).json;
+  check(f1.status === 201 && /^DEC-\d{4}-\d{6}$/.test(f1.json.reference) && f1d.reference === f1.json.reference && f1d.units === 14 && f1d.packaging === 'Europalet no retornable' && f1d.adr === true && f1d.adr_detail === 'UN 1203, 3, II (D/E)' && f1d.origins[0].time === '08:30' && f1d.destinations[0].time === '17:45', 'el transporte guarda su referencia (DEC-AAAA-NNNNNN), unidades, embalaje, ADR y la hora de cada lugar');
+  const f2 = await call('POST', '/api/v1/transports', { token: O, body: fb({ driver_id: undefined }) });
+  check(f2.json.reference !== f1.json.reference && Number(f2.json.reference.slice(-6)) > Number(f1.json.reference.slice(-6)), 'cada transporte recibe una referencia nueva y creciente');
+  const f1pdf = (await call('GET', `/api/v1/decas/${f1.json.deca_id}/versions/1/pdf`, { token: O })).buf, f1t = pdfRaw(f1pdf);
+  check(/Documento de Control Administrativo \(DeCA\)/.test(f1t) && f1t.includes(f1.json.reference) && /Nº de autorización de transporte 11551548/.test(f1t) && /Tractora \+ Semirremolque/.test(f1t), 'Modelo DECARGO: cabecera con referencia, transportista con su nº de autorización y tipo de conjunto');
+  check(/hora 08:30/.test(f1t) && /hora 17:45/.test(f1t) && /Número de unidades 14/.test(f1t) && /Tipo de embalaje Europalet no retornable/.test(f1t) && /Mercancía peligrosa \(ADR\) Sí · UN 1203, 3, II \(D\/E\)/.test(f1t) && /\+2 a \+6 ºC/.test(f1t), 'imprime la hora de carga y entrega, unidades, embalaje, ADR y temperatura');
+  check(/Carlos Pérez Gómez/.test(f1t) && /Ref\.: IF-0001/.test(f1t) && /Precinto: PR-5555/.test(f1t) && /Guarromán/.test(f1t), 'imprime el conductor (con la opción activada), referencias, precintos y el domicilio de entrega');
+  check(pages(f1pdf) === 1 && decodeQr(f1pdf, 'fichas.pdf') === f1d.deca.technical.public_url && f1pdf.length < 5_000_000, 'cabe en una página, su QR lleva el enlace del DeCA y pesa menos de 5 MB');
+  const many25 = (n, k0) => Array.from({ length: n }, (_, k) => ({ party: `Empresa ${k0 + k} de prueba, S.L.`, address: `Calle del Polígono ${k + 1}, nave ${k + 2}`, city: `Localidad ${String.fromCharCode(65 + k)}`, time: '09:30', pallets: k + 1, references: `R-${k}`, seals: `P-${k}` }));
+  const big = await call('POST', '/api/v1/transports', { token: O, body: fb({ cargo: `Muchos lugares fichas ${sfx}`, origins: many25(10, 1), destinations: many25(10, 20), units: undefined }) });
+  const bigPdf = (await call('GET', `/api/v1/decas/${big.json.deca_id}/versions/1/pdf`, { token: O })).buf;
+  check(big.status === 201 && pages(bigPdf) === 1 && /Total cargado 55 palets/.test(pdfRaw(bigPdf)) && /Empresa 29 de prueba/.test(pdfRaw(bigPdf)), 'con 10 lugares de carga y 10 de entrega sigue cabiendo en una página y no se pierde ninguno');
+  const vc25 = await http('POST', `/api/v1/transports/${f1.json.id}/assign-driver`, { token: O, body: { driver_id: dB.id } });
+  check(vc25.status === 204 && (await call('GET', `/api/v1/transports/${f1.json.id}`, { token: O })).json.deca.version === 2 && /Conductor sucesivo \(relevo\) Prueba webB/.test(pdfRaw((await call('GET', `/api/v1/decas/${f1.json.deca_id}/versions/2/pdf`, { token: O })).buf)), 'al cambiar de conductor, el Modelo DECARGO recibe una versión nueva con el conductor sucesivo (mismo enlace)');
+  // otro transportista con su autorización (y la agenda la aprende)
+  const oc = await call('POST', '/api/v1/transports', { token: O, body: fb({ cargo: `Otro transportista ${sfx}`, driver_id: undefined, carrier_name: `Transportes Otros ${sfx} S.L.`, carrier_nif: 'B12345674', carrier_authorization: '99887766' }) });
+  check(oc.status === 201 && /Nº de autorización de transporte 99887766/.test(pdfRaw((await call('GET', `/api/v1/decas/${oc.json.deca_id}/versions/1/pdf`, { token: O })).buf)) && psql(`SELECT transport_authorization FROM party WHERE name = 'Transportes Otros ${sfx} S.L.'`) === '99887766', 'otro transportista con su nº de autorización: se imprime y la agenda lo guarda');
+  for (const [o, why] of [[{ units: -1 }, 'unidades negativas'], [{ units: 1.5 }, 'unidades decimales'], [{ adr: 'si' }, 'ADR no booleano'], [{ origins: [{ address: 'Calle X 1, Granada', time: '25:00' }] }, 'hora imposible'], [{ packaging: 'x'.repeat(41) }, 'embalaje demasiado largo'], [{ carrier_name: 'Otra S.L.', carrier_nif: 'B12345674', carrier_authorization: '¡¡¡' }, 'autorización con caracteres raros']]) {
+    check((await call('POST', '/api/v1/transports', { token: O, body: fb(o) })).status === 400, `datos nuevos rechazados (${why}) → 400`);
+  }
+  const drv25 = (await http('GET', '/api/v1/driver/transports', { token: dB24 })).json.find((x) => x.id === f1.json.id);
+  check(drv25 && drv25.reference === f1.json.reference && drv25.destinations[0].time === '17:45', 'el conductor ve la referencia y la hora de cada lugar');
+  const prvD = Buffer.from(await (await prv(AD2, 'DECARGO', 'ejemplo')).arrayBuffer()), prvDB = Buffer.from(await (await prv(AD2, 'DECARGO', 'blanco')).arrayBuffer());
+  check(/MODELO DE EJEMPLO/.test(pdfRaw(prvD)) && pages(prvD) === 1 && pages(prvDB) === 1 && !/CARGADOR DE EJEMPLO/.test(pdfRaw(prvDB)), 'vista previa del Modelo DECARGO con datos de ejemplo y en blanco (una página)');
+  check(/a\) CARGADOR CONTRACTUAL/.test(pdfRaw((await call('GET', `/api/v1/decas/${back17.json.deca_id}/versions/1/pdf`, { token: O })).buf)), 'los DeCA emitidos con el modelo por apartados conservan su diseño');
+  await http('PUT', '/api/v1/admin/config/company', { token: AD2, body: { ...coA } });
+  await TPL(AD2, { template: 'ESTANDAR', show_driver: false });
 
   // ---- 16.10 seed de desarrollo
   info('16.10 Seed de desarrollo (credenciales aleatorias, idempotente)');

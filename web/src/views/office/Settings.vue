@@ -4,7 +4,7 @@ import FileViewer from '../../components/FileViewer.vue';
 import { api, auth } from '../../api';
 import { messageFor } from '../../errors';
 
-interface Cfg { doc_template: string; doc_templates: { code: string; label: string; description: string }[]; deca_show_driver: boolean; food_transport: boolean; expiry_warn_days: number; company: { name: string; nif: string; address: string; postal_code: string | null; city: string | null; province: string | null; country: string | null } | null; test_mode_source: string; dev_endpoints_available: boolean; public_base_url: string | null; source: 'web' | 'env'; env_public_base_url: string | null; error: string | null; https: boolean; insecure_allowed: boolean;
+interface Cfg { doc_template: string; doc_templates: { code: string; label: string; description: string }[]; deca_show_driver: boolean; food_transport: boolean; expiry_warn_days: number; company: { name: string; nif: string; address: string; postal_code: string | null; city: string | null; province: string | null; country: string | null; transport_authorization?: string | null } | null; test_mode_source: string; dev_endpoints_available: boolean; public_base_url: string | null; source: 'web' | 'env'; env_public_base_url: string | null; error: string | null; https: boolean; insecure_allowed: boolean;
   test_mode: boolean; dev_endpoints: boolean; push_configured: boolean; fcm: { configured: boolean; project_id: string | null; package: string; updated_at: string | null; updated_by: string | null }; decas_total: number; decas_other_base: number }
 interface Probe { ok: boolean; status: number | null; detail: string }
 interface Check { url: string; checked: boolean; reason: string | null; web: Probe | null; docs: Probe | null }
@@ -55,11 +55,11 @@ async function saveDocs(food?: boolean): Promise<void> {
   error.value = ''; docMsg.value = '';
   try { cfg.value = await api<Cfg>('/admin/config/documents', { method: 'PUT', body: { ...(food === undefined ? {} : { food_transport: food }), warn_days: Number(warn.value) } }); warn.value = cfg.value.expiry_warn_days; docMsg.value = 'Guardado.'; } catch (e) { error.value = messageFor(e); }
 }
-const co = reactive({ name: '', nif: '', address: '', postal_code: '', city: '', province: '', country: '' }), coMsg = ref(''), flagBusy = ref('');
-function fillCompany(): void { if (cfg.value) warn.value = cfg.value.expiry_warn_days; if (cfg.value?.company) { const c = cfg.value.company; co.name = c.name; co.nif = c.nif; co.address = c.address; co.postal_code = c.postal_code ?? ''; co.city = c.city ?? ''; co.province = c.province ?? ''; co.country = c.country ?? ''; } }
+const co = reactive({ name: '', nif: '', address: '', postal_code: '', city: '', province: '', country: '', transport_authorization: '' }), coMsg = ref(''), flagBusy = ref('');
+function fillCompany(): void { if (cfg.value) warn.value = cfg.value.expiry_warn_days; if (cfg.value?.company) { const c = cfg.value.company; co.name = c.name; co.nif = c.nif; co.address = c.address; co.postal_code = c.postal_code ?? ''; co.transport_authorization = c.transport_authorization ?? ''; co.city = c.city ?? ''; co.province = c.province ?? ''; co.country = c.country ?? ''; } }
 async function saveCompany(): Promise<void> {
   error.value = ''; coMsg.value = '';
-  try { cfg.value = await api<Cfg>('/admin/config/company', { method: 'PUT', body: { ...co, postal_code: co.postal_code || null, city: co.city || null, province: co.province || null, country: co.country || null } }); fillCompany(); coMsg.value = 'Datos guardados. Todos los transportes y DeCA nuevos llevarán este transportista efectivo.'; } catch (e) { error.value = messageFor(e); }
+  try { cfg.value = await api<Cfg>('/admin/config/company', { method: 'PUT', body: { ...co, transport_authorization: co.transport_authorization.trim() || null, postal_code: co.postal_code || null, city: co.city || null, province: co.province || null, country: co.country || null } }); fillCompany(); coMsg.value = 'Datos guardados. Todos los transportes y DeCA nuevos llevarán este transportista efectivo.'; } catch (e) { error.value = messageFor(e); }
 }
 async function setFlag(name: 'test_mode' | 'dev_endpoints', value: boolean): Promise<void> {
   if (name === 'test_mode' && !value && !window.confirm('A partir de ahora los PDF nuevos NO llevarán el rótulo «DOCUMENTO DE PRUEBA» y se emitirán como documentos reales. Los DeCA ya emitidos conservan su rótulo. ¿Continuar?')) return;
@@ -103,6 +103,7 @@ onMounted(() => { if (isAdmin.value) void load(); });
       <form class="stack" @submit.prevent="saveCompany">
         <div class="grid2"><label>Nombre o denominación social<input v-model="co.name" required maxlength="120" /></label><label>NIF<input v-model="co.nif" required maxlength="16" /></label></div>
         <label>Domicilio (calle y número)<input v-model="co.address" required maxlength="200" /></label>
+        <label>Nº de autorización de transporte<span class="hint small"> (opcional: el de la autorización de transporte público de mercancías / Registro de Empresas y Actividades de Transporte; sale en el Modelo DECARGO)</span><input v-model="co.transport_authorization" maxlength="30" /></label>
         <div class="grid4"><label>Código postal<input v-model="co.postal_code" maxlength="10" inputmode="numeric" /></label><label>Localidad<input v-model="co.city" maxlength="80" /></label><label>Provincia<input v-model="co.province" maxlength="80" /></label><label>País<input v-model="co.country" maxlength="60" placeholder="España" /></label></div>
         <div class="row"><button class="btn btn-primary" type="submit">Guardar</button></div>
       </form>

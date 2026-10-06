@@ -22,9 +22,9 @@ async function expand(p: any): Promise<void> {
 async function reopen(): Promise<void> { if (open.value) open.value = await api(`/parties/${open.value.id}?all=1`); await load(); }
 
 // ---- empresa
-const pform = reactive({ id: '', name: '', nif: '', address: '', postal_code: '', city: '', province: '', country: '', notes: '' }), pOpen = ref(false), nifHint = ref('');
-function newParty(): void { Object.assign(pform, { id: '', name: '', nif: '', address: '', postal_code: '', city: '', province: '', country: '', notes: '' }); nifHint.value = ''; error.value = ''; pOpen.value = true; }
-function editParty(p: any): void { Object.assign(pform, { id: p.id, name: p.name, nif: p.nif ?? '', address: p.address ?? '', postal_code: p.postal_code ?? '', city: p.city ?? '', province: p.province ?? '', country: p.country ?? '', notes: p.notes ?? '' }); nifHint.value = ''; error.value = ''; pOpen.value = true; }
+const pform = reactive({ id: '', name: '', nif: '', transport_authorization: '', address: '', postal_code: '', city: '', province: '', country: '', notes: '' }), pOpen = ref(false), nifHint = ref('');
+function newParty(): void { Object.assign(pform, { id: '', name: '', nif: '', transport_authorization: '', address: '', postal_code: '', city: '', province: '', country: '', notes: '' }); nifHint.value = ''; error.value = ''; pOpen.value = true; }
+function editParty(p: any): void { Object.assign(pform, { id: p.id, name: p.name, nif: p.nif ?? '', transport_authorization: p.transport_authorization ?? '', address: p.address ?? '', postal_code: p.postal_code ?? '', city: p.city ?? '', province: p.province ?? '', country: p.country ?? '', notes: p.notes ?? '' }); nifHint.value = ''; error.value = ''; pOpen.value = true; }
 async function checkNif(): Promise<void> {
   nifHint.value = '';
   if (pform.nif.trim().length < 8) return;
@@ -32,7 +32,7 @@ async function checkNif(): Promise<void> {
 }
 async function saveParty(): Promise<void> {
   busy.value = true; error.value = ''; ok.value = '';
-  const body = { name: pform.name, nif: pform.nif || null, address: pform.address || null, postal_code: pform.postal_code || null, city: pform.city || null, province: pform.province || null, country: pform.country || null, notes: pform.notes || null };
+  const body = { name: pform.name, nif: pform.nif || null, transport_authorization: pform.transport_authorization.trim() || null, address: pform.address || null, postal_code: pform.postal_code || null, city: pform.city || null, province: pform.province || null, country: pform.country || null, notes: pform.notes || null };
   try {
     if (pform.id) await api(`/parties/${pform.id}`, { method: 'PATCH', body }); else await api('/parties', { method: 'POST', body });
     pOpen.value = false; ok.value = 'Empresa guardada.'; await reopen(); await load();
@@ -110,6 +110,7 @@ onMounted(load);
       <label>Nombre o razón social<input v-model="pform.name" required maxlength="120" /></label>
       <label>NIF / CIF<input v-model="pform.nif" maxlength="16" autocomplete="off" @input="checkNif" /><span v-if="nifHint" class="hint small"> {{ nifHint }}</span></label>
       <label>Domicilio (calle y número)<input v-model="pform.address" maxlength="200" /></label>
+      <label>Nº de autorización de transporte<span class="hint small"> (solo si es una empresa transportista; opcional)</span><input v-model="pform.transport_authorization" maxlength="30" /></label>
       <div class="grid4"><label>Código postal<input v-model="pform.postal_code" maxlength="10" inputmode="numeric" /></label><label>Localidad<input v-model="pform.city" maxlength="80" /></label><label>Provincia<input v-model="pform.province" maxlength="80" /></label><label>País<input v-model="pform.country" maxlength="60" placeholder="España" /></label></div>
       <label>Notas (opcional)<input v-model="pform.notes" maxlength="500" /></label>
       <button class="btn btn-primary" :disabled="busy">Guardar</button>
