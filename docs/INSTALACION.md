@@ -120,4 +120,6 @@ Las migraciones solo añaden: nunca borran datos ni modifican documentos ya emit
 ## Desinstalar
 `./deca down` detiene DECARGO **sin borrar datos**. Los datos viven en volúmenes de Docker (`decargo_pgdata`, `decargo_documents`, `decargo_backups`).
 
+Si borras la carpeta de DECARGO, los volúmenes siguen en el equipo, pero las contraseñas para abrirlos estaban en su `.env`. Para volver a instalar conservando los datos, pon en la carpeta nueva el `.env` antiguo antes de ejecutar `./instalar.sh`. Si no, el instalador se detiene y explica qué hacer.
+
 Para eliminarlos de verdad, haz antes una copia y después ejecuta `docker volume rm` sobre esos volúmenes. **No se puede deshacer.** Recuerda que la ley obliga a conservar los DeCA un tiempo mínimo.

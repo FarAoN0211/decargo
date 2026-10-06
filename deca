@@ -58,6 +58,20 @@ check_ports() {
 case "${1:-}" in
   init)
     if [ -f .env ]; then echo ".env ya existe; no se toca."; else
+      # Volúmenes de una instalación anterior (carpeta borrada o copiada sin .env): sus contraseñas están en el .env antiguo
+      # y con un .env nuevo la base de datos rechaza la conexión. Nunca se borran solos.
+      OLD=$(for v in $(grep -oE 'name: [a-z0-9_]+_(pgdata|documents|backups)$' docker-compose.yml | cut -d' ' -f2); do docker volume inspect "$v" >/dev/null 2>&1 && echo "$v"; done | xargs)
+      if [ -n "$OLD" ]; then
+        cat >&2 <<EOF
+ERROR: este equipo ya tiene datos de una instalación anterior de DECARGO (volúmenes de Docker: $OLD),
+pero falta su archivo .env, que guarda las contraseñas de esa base de datos. Con un .env nuevo no se podría abrir.
+  · Si quieres conservar esos datos: vuelve a poner aquí el .env de aquella instalación y ejecuta de nuevo ./instalar.sh.
+  · Si NO los necesitas (por ejemplo, era una prueba): bórralos y vuelve a ejecutar ./instalar.sh.
+    ¡No se puede deshacer! Antes comprueba que no hay DeCA que debas conservar.
+      docker rm -f \$(docker ps -aq --filter label=com.docker.compose.project=$(grep -m1 -oE '^name: [a-z0-9_-]+' docker-compose.yml | cut -d' ' -f2)); docker volume rm $OLD
+EOF
+        exit 1
+      fi
       umask 077
       read -r VAPID_PUB VAPID_PRIV <<<"$(vapid_keys)"
       sed -e "s|^VAPID_PUBLIC_KEY=.*|VAPID_PUBLIC_KEY=${VAPID_PUB}|" \
