@@ -157,7 +157,18 @@ function startSpy(): void {
 }
 function go(id: string): void { active.value = id; document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 watch(cfg, async (v) => { if (v) { await nextTick(); startSpy(); } }, { once: true });
-onBeforeUnmount(() => spy?.disconnect());
+// La barra superior de la aplicación es fija y su altura varía (se parte en varias líneas en ventanas estrechas): el menú se ancla justo debajo.
+let bars: ResizeObserver | undefined;
+function measureBars(): void {
+  const h = (sel: string): number => document.querySelector(sel)?.getBoundingClientRect().height ?? 0;
+  document.documentElement.style.setProperty('--cfg-top', `${Math.round(Math.max(h('.topbar'), h('.demo-bar')))}px`);
+}
+onMounted(() => {
+  measureBars();
+  bars = new ResizeObserver(measureBars);
+  for (const el of document.querySelectorAll('.topbar, .demo-bar')) bars.observe(el);
+});
+onBeforeUnmount(() => { spy?.disconnect(); bars?.disconnect(); document.documentElement.style.removeProperty('--cfg-top'); });
 </script>
 <template>
   <div class="page-title"><h1>Configuración</h1></div>
