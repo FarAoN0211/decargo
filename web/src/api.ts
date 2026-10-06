@@ -79,7 +79,8 @@ export async function login(username: string, password: string, totp?: string): 
 }
 
 export async function activate(username: string, code: string, password: string, totp?: string): Promise<void> {
-  const { res, data } = await postJson('/auth/activate', { username, code, password, device_label: 'Navegador web', ...(totp ? { totp_code: totp } : {}) });
+  const device_label = 'DecargoAndroid' in window ? 'App Android' : 'Navegador web';
+  const { res, data } = await postJson('/auth/activate', { username, code, password, device_label, ...(totp ? { totp_code: totp } : {}) });
   if (!res.ok) throw new ApiError(res.status, data.error ?? 'error', data);
   finishLogin(username, data);
 }

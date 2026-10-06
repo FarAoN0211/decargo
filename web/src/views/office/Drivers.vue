@@ -7,11 +7,18 @@ import DocsPanel from '../../components/DocsPanel.vue';
 import ProfileForm from '../../components/ProfileForm.vue';
 import { useRoute } from 'vue-router';
 import { DEVICE, fmtDateTime } from '../../format';
+import QRCode from 'qrcode';
 
 const rows = ref<any[]>([]), error = ref(''), ok = ref(''), busy = ref(''), loading = ref(true);
 const canWrite = computed(() => auth.user?.role === 'admin' || auth.user?.role === 'oficina');
 const creating = ref(false), form = reactive({ username: '', full_name: '' });
-const code = ref<null | { who: string; code: string; expires: string }>(null);
+const code = ref<null | { who: string; code: string; expires: string; qr: string; https: boolean }>(null);
+/** Código de activación + QR con el enlace de activación (usuario y código en el «#»: no viajan al servidor). */
+async function showCode(who: string, r: any): Promise<void> {
+  const url: string | null = r.activation_url ?? null;
+  const qr = url ? await QRCode.toString(url, { type: 'svg', errorCorrectionLevel: 'M', margin: 2 }) : '';
+  code.value = { who, code: r.activation_code, expires: r.activation_expires_at, qr, https: !!url?.startsWith('https://') };
+}
 const open = ref<string>(''), devices = ref<any[]>([]);
 const route = useRoute();
 const profileFor = ref<string>('');
@@ -59,13 +66,13 @@ async function create(): Promise<void> {
   busy.value = 'new'; error.value = '';
   try {
     const r = await api<any>('/users', { method: 'POST', body: { username: form.username, full_name: form.full_name, role: 'conductor' } });
-    code.value = { who: form.full_name, code: r.activation_code, expires: r.activation_expires_at };
+    await showCode(form.full_name, r);
     creating.value = false; form.username = ''; form.full_name = ''; await load();
   } catch (e) { error.value = messageFor(e); } finally { busy.value = ''; }
 }
 async function reissue(u: any): Promise<void> {
   busy.value = `c-${u.id}`; error.value = '';
-  try { const r = await api<any>(`/users/${u.id}/activation`, { method: 'POST' }); code.value = { who: u.full_name, code: r.activation_code, expires: r.activation_expires_at }; } catch (e) { error.value = messageFor(e); } finally { busy.value = ''; }
+  try { const r = await api<any>(`/users/${u.id}/activation`, { method: 'POST' }); await showCode(u.full_name, r); } catch (e) { error.value = messageFor(e); } finally { busy.value = ''; }
 }
 async function showDevices(id: string, keep = false): Promise<void> {
   if (!keep && open.value === id) { open.value = ''; return; }
@@ -152,8 +159,13 @@ onMounted(() => { void load(); void loadExpiries(); });
   <Modal v-if="code" :title="`Código de activación de ${code.who}`" @close="code = null">
     <div class="stack">
       <div class="code-box">{{ code.code }}</div>
-      <p class="alert alert-warn">Se muestra <b>una sola vez</b>: anótalo ahora. Caduca el {{ fmtDateTime(code.expires) }} y solo sirve una vez.</p>
-      <p class="small muted">El conductor entra en esta misma dirección, elige «Activar mi cuenta» e introduce su usuario y este código.</p>
+      <div v-if="code.qr" class="act-qr">
+        <div class="act-qr-img" v-html="code.qr"></div>
+        <p class="small">El conductor puede <b>escanear este QR</b> con la app DECARGO («Escanear QR de activación») o con la cámara del móvil: entra con su usuario y el código ya puestos, elige su contraseña y ese móvil queda activado.</p>
+      </div>
+      <p v-if="code.qr && !code.https" class="small muted">La app Android solo usa direcciones https: pon la dirección pública en Configuración para que el QR sirva en la app. Con la cámara funciona en la red local.</p>
+      <p class="alert alert-warn">Se muestra <b>una sola vez</b>: anótalo ahora. Caduca el {{ fmtDateTime(code.expires) }} y solo sirve una vez. El QR contiene el código: no lo compartas.</p>
+      <p class="small muted">También puede entrar en esta misma dirección, elegir «Activar mi cuenta» e introducir su usuario y este código.</p>
     </div>
   </Modal>
 </template>

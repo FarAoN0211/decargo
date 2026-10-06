@@ -19,8 +19,8 @@ android {
         applicationId = "es.decargo.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3.0"
+        versionCode = 5
+        versionName = "1.4.0"
         // Servidor por defecto (se puede cambiar desde la propia app si no conecta). Se pasa con -PserverUrl=https://…
         buildConfigField("String", "SERVER_URL", "\"${(project.findProperty("serverUrl") as String?) ?: "https://decargo.duckdns.org"}\"")
     }
@@ -56,4 +56,6 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-messaging")
     implementation("androidx.core:core:1.13.1")
+    // Escáner de QR de Google Play Services: lo muestra el sistema, sin permiso de cámara en la app
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }

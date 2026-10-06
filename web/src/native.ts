@@ -18,6 +18,7 @@ interface Bridge {
   state(): string; requestNotifications(): void; openFullScreenSettings(): void; openOverlaySettings(): void;
   requestBattery(): void; openAppSettings(): void; refresh(): void;
   openXiaomiPermissions?(): void; openXiaomiAutostart?(): void;
+  scanActivationQr?(): void;        // app 1.4.0+: escáner de QR de activación (abre el enlace leído)
 }
 const bridge = (): Bridge | null => ((window as unknown as { DecargoAndroid?: Bridge }).DecargoAndroid ?? null);
 export const isNativeApp = (): boolean => bridge() !== null;
@@ -34,5 +35,7 @@ export const native = {
   openAppSettings: (): void => bridge()?.openAppSettings(),
   refresh: (): void => bridge()?.refresh(),
   openXiaomiPermissions: (): void => bridge()?.openXiaomiPermissions?.(),
-  openXiaomiAutostart: (): void => bridge()?.openXiaomiAutostart?.()
+  openXiaomiAutostart: (): void => bridge()?.openXiaomiAutostart?.(),
+  scanActivationQr: (): void => bridge()?.scanActivationQr?.()
 };
+export const canScanQr = (): boolean => typeof bridge()?.scanActivationQr === 'function';

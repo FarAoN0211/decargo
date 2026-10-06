@@ -86,6 +86,7 @@ Con el dominio puesto:
 2. Escribe el usuario del administrador y el **código de activación** que mostró el instalador, y elige una contraseña.
 3. Configura la **verificación en dos pasos** con una aplicación autenticadora (Google Authenticator, Aegis…). Es obligatoria para la oficina.
 4. Si perdiste el código: `./deca create-user` crea otro usuario. Un administrador también puede generar un código nuevo desde Conductores.
+5. Conductores: en **Conductores → Nuevo conductor** se muestra su código y un **QR de activación**. El conductor lo escanea con la app Android («Escanear QR de activación») o con la cámara del móvil, elige su contraseña y ese móvil queda activado. La app solo usa direcciones https: el QR sirve en la app cuando la dirección pública está configurada.
 
 ## Antes de usarlo con datos reales
 En **Configuración**:

@@ -3,6 +3,7 @@ package es.decargo.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -28,6 +29,10 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
 /** La aplicación es la misma web de DECARGO dentro de un WebView; lo nativo solo añade avisos que encienden la pantalla. */
 class MainActivity : Activity() {
@@ -147,6 +152,38 @@ class MainActivity : Activity() {
         }
     }
 
+    /** QR de activación de la oficina: abre la pantalla «Activar mi cuenta» con el usuario y el código ya puestos. */
+    fun scanActivationQr() {
+        val opts = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
+        GmsBarcodeScanning.getClient(this, opts).startScan()
+            .addOnSuccessListener { openActivation(it.rawValue ?: "") }
+            .addOnFailureListener { toast("No se pudo abrir el escáner de QR (necesita los servicios de Google Play actualizados).") }
+    }
+
+    /** Solo enlaces https de activación: https://servidor[/<ruta>]/activar#u=…&c=…. Si el QR es de otro servidor, se pregunta antes de cambiarlo
+     *  (sirve para configurar la app de una empresa con su propio servidor; un QR ajeno nunca cambia el servidor sin confirmación). */
+    private fun openActivation(raw: String) {
+        val u = runCatching { Uri.parse(raw.trim()) }.getOrNull()
+        val seg = u?.pathSegments ?: emptyList()
+        val entry = when {
+            seg.size == 2 && Regex("^[A-Za-z0-9_-]{16,64}$").matches(seg[0]) && seg[1] == "activar" -> "/${seg[0]}/"
+            seg.size == 1 && seg[0] == "activar" -> "/"
+            else -> null
+        }
+        val server = if (u?.scheme == "https") Prefs.normalizeServer("https://${u.encodedAuthority}") else null
+        if (u == null || entry == null || server == null || u.fragment?.contains("c=") != true) { toast("Este QR no es un código de activación de DECARGO."); return }
+        val go = { Prefs.setEntry(this, entry); errorView.visibility = View.GONE; web.loadUrl(raw.trim()) }
+        if (server == Prefs.server(this)) { go(); return }
+        AlertDialog.Builder(this)
+            .setTitle("Servidor DECARGO de tu empresa")
+            .setMessage("Este código de activación es del servidor:\n\n${u.host}\n\n¿Usar este servidor en la app a partir de ahora?")
+            .setPositiveButton("Usar este servidor") { _, _ -> Prefs.setServer(this, server); Fcm.refresh(this); go() }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun toast(msg: String) { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+
     // Los enlaces «blob:» (PDF generados en la página) no se pueden abrir en un WebView: se pasan a la app en base64.
     // `navigator.share` tampoco existe: se usa el menú de compartir de Android.
     private val pageScript = """
@@ -210,6 +247,7 @@ class MainActivity : Activity() {
             addView(TextView(this@MainActivity).apply { text = "DECARGO"; textSize = 26f; setTextColor(0xFF123D4E.toInt()); gravity = Gravity.CENTER })
             addView(errorText)
             addView(Button(this@MainActivity).apply { text = "Reintentar"; setOnClickListener { load("/") } })
+            addView(Button(this@MainActivity).apply { text = "Escanear QR de activación"; setOnClickListener { scanActivationQr() } })
             addView(TextView(this@MainActivity).apply { text = "\nDirección del servidor DECARGO de tu empresa:"; textSize = 14f })
             addView(server)
             addView(note)

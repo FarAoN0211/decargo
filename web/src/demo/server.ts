@@ -15,6 +15,7 @@ setFontProvider(async () => {
   const get = async (f: string): Promise<Uint8Array> => new Uint8Array(await (await fetch(`${import.meta.env.BASE_URL}fonts/${f}`)).arrayBuffer());
   return { regular: await get('DejaVuSans.ttf'), bold: await get('DejaVuSans-Bold.ttf') };
 });
+const demoActivationUrl = (u: string, c: string): string => `${location.origin}${import.meta.env.BASE_URL}activar#u=${encodeURIComponent(u)}&c=${encodeURIComponent(c)}`;
 const demoQrSvg = (url: string): Promise<string> => QRCode.toString(url, { type: 'svg', errorCorrectionLevel: 'M', margin: 4 });
 const DEMO_BANNER = 'DEMOSTRACIÓN · DATOS FICTICIOS · SIN VALOR';
 
@@ -416,11 +417,11 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
   if (method === 'POST' && path === '/users') {
     officeOnly(); const username = req(b.username, 'username', 3).toLowerCase(); if (users.some((u) => u.username === username)) throw new DemoError(409, 'username_taken');
     const u = { id: uid(), username, full_name: req(b.full_name, 'full_name', 2), role: b.role ?? 'conductor', active: true, pending_activation: true, totp_enabled: false, created_at: new Date().toISOString() };
-    users.push(u); return ok({ id: u.id, username, role: u.role, activation_code: `DEMO-${fake(4).toUpperCase()}-${fake(4).toUpperCase()}`, activation_expires_at: ts(7) }, 201);
+    users.push(u); { const c = `DEMO-${fake(4).toUpperCase()}-${fake(4).toUpperCase()}`; return ok({ id: u.id, username, role: u.role, activation_code: c, activation_expires_at: ts(7), activation_url: demoActivationUrl(username, c) }, 201); }
   }
   if ((x = m(/^\/users\/([^/]+)\/(activation|deactivate|reactivate)$/)) && method === 'POST') {
     officeOnly(); const u = userById(x[1]); if (!u) throw notFound();
-    if (x[2] === 'activation') return ok({ activation_code: `DEMO-${fake(4).toUpperCase()}-${fake(4).toUpperCase()}`, activation_expires_at: ts(7) });
+    if (x[2] === 'activation') { const c = `DEMO-${fake(4).toUpperCase()}-${fake(4).toUpperCase()}`; return ok({ activation_code: c, activation_expires_at: ts(7), activation_url: demoActivationUrl(u.username, c) }); }
     u.active = x[2] === 'reactivate'; return none();
   }
   if ((x = m(/^\/users\/([^/]+)\/profile(\/reveal)?$/))) {

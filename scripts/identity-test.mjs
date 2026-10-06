@@ -1550,6 +1550,27 @@ async function run() {
   await http('PUT', '/api/v1/admin/config/company', { token: AD2, body: { ...coA } });
   await TPL(AD2, { template: 'ESTANDAR', show_driver: false });
 
+  // ---- 16.26 QR de activación: el enlace lleva usuario y código en el fragmento (#), que el navegador no envía al servidor
+  info('16.26 QR de activación');
+  const QB = (ENV.PUBLIC_DOCS_BASE_URL || '').replace(/\/+$/, '');
+  const qd = await newUser(O, 'conductor', 'qr');
+  const qu = qd.r.json?.activation_url ?? '';
+  const qm = qu.match(/^(.*)\/([A-Za-z0-9_-]{16,64})\/activar#u=([^&]+)&c=(.+)$/);
+  check(qd.r.status === 201 && !!qm && qm[1] === QB && qm[2] === ENV.DECARGO_APP_PATH && decodeURIComponent(qm[3]) === qd.username && decodeURIComponent(qm[4]) === qd.code,
+    'al crear un conductor la respuesta trae el enlace del QR: dirección pública + ruta de la aplicación, usuario y código en el fragmento (#)', qu.replace(qd.code, '<código>'));
+  const qr2 = await http('POST', `/api/v1/users/${qd.id}/activation`, { token: O }); keep(qr2.json.activation_code);
+  const qu2 = qr2.json.activation_url ?? '';
+  check(qr2.status === 200 && qu2.startsWith(`${QB}/`) && qu2.endsWith(`activar#u=${encodeURIComponent(qd.username)}&c=${encodeURIComponent(qr2.json.activation_code)}`) && qu2 !== qu, 'al pedir un código nuevo el QR también cambia');
+  const qf = new URLSearchParams(qu2.slice(qu2.indexOf('#') + 1));
+  const qold = await activate({ username: qd.username, code: qd.code }, PW(), 'App Android');
+  check(qold.status !== 200, 'el QR anterior (código sustituido) ya no sirve', `${qold.status}`);
+  const qa = await activate({ username: qf.get('u'), code: qf.get('c') }, PW(), 'App Android');
+  check(qa.status === 200 && qa.json.scope === 'FULL' && qa.json.device?.status === 'AUTORIZADO', 'con los datos leídos del QR el conductor queda activado y ese teléfono AUTORIZADO', `${qa.status} ${qa.json?.error ?? ''}`);
+  const qdev = await http('GET', `/api/v1/devices?user_id=${qd.id}`, { token: O });
+  check(qdev.status === 200 && qdev.json.length === 1 && /App Android/.test(JSON.stringify(qdev.json[0])), 'la oficina ve el teléfono activado por QR («App Android»)');
+  const qrep = await activate({ username: qf.get('u'), code: qf.get('c') }, PW(), 'App Android');
+  check(qrep.status !== 200, 'el mismo QR no sirve dos veces');
+
   // ---- 16.10 seed de desarrollo
   info('16.10 Seed de desarrollo (credenciales aleatorias, idempotente)');
   const seedState = () => psql(`SELECT (SELECT count(*) FROM app_user)||':'||(SELECT count(*) FROM vehicle)||':'||(SELECT count(*) FROM transport)||':'||(SELECT count(*) FROM deca)||':'||(SELECT md5(string_agg(password_hash, ',' ORDER BY username)) FROM app_user WHERE username LIKE '%.dev')`);

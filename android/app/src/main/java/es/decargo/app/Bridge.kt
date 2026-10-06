@@ -55,6 +55,8 @@ class Bridge(private val a: MainActivity) {
         if (!trusted()) return
         if (Build.VERSION.SDK_INT >= 34) open(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg())) else openAppSettings()
     }
+    /** Escáner del QR de activación que da la oficina (enlace …/activar#u=…&c=…). */
+    @JavascriptInterface fun scanActivationQr() { if (trusted()) a.runOnUiThread { a.scanActivationQr() } }
     @JavascriptInterface fun openXiaomiPermissions() { if (trusted()) a.runOnUiThread { Xiaomi.openPermissions(a) } }
     @JavascriptInterface fun openXiaomiAutostart() { if (trusted()) a.runOnUiThread { Xiaomi.openAutostart(a) } }
     @JavascriptInterface fun openOverlaySettings() { if (trusted()) open(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg())) }

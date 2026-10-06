@@ -72,6 +72,9 @@ details.tech { margin-top: .8rem; border: 1px dashed var(--line); border-radius:
 .modal { background: #fff; border-radius: 12px; width: 100%; max-width: 34rem; max-height: 92vh; overflow: auto; padding: 1.2rem 1.3rem; } .modal.wide { max-width: 62rem; }
 .pdf-frame { width: 100%; height: 72vh; border: 1px solid var(--line); border-radius: 8px; background: #eee; }
 .qr-big { display: block; margin: 0 auto; width: min(22rem, 100%); height: auto; background: #fff; }
+.act-qr { display: flex; gap: 1rem; align-items: center; } .act-qr p { margin: 0; }
+.act-qr-img { flex: 0 0 11rem; background: #fff; border-radius: 8px; } .act-qr-img svg { display: block; width: 100%; height: auto; }
+@media (max-width: 30rem) { .act-qr { flex-direction: column; } }
 .code-box { font: 700 1.5rem/1.2 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .08em; text-align: center; padding: .9rem; border: 2px dashed var(--dark); border-radius: 10px; background: #f6faf0; user-select: all; }
 
 /* conductor: pensado para el móvil */

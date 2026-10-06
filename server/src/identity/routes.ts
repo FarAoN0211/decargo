@@ -12,6 +12,7 @@ import { verifyAccess } from './tokens';
 import { syncDriverIntoDeca } from '../office/transports';
 import { currentDriverOf, pushConfig, pushTestAck, pushTestStatus, saveFcmToken, savePushSubscription, sendPushTest, sendTransportAssignedPush, sendTransportPush } from './push';
 import { fcmClient } from './fcm';
+import { getPublicBase } from '../common/settings';
 
 declare module 'fastify' { interface FastifyRequest { auth?: AuthContext } }
 
@@ -87,7 +88,8 @@ export function registerIdentityRoutes(app: FastifyInstance, pool: Pool, storage
     properties: { username: { type: 'string', maxLength: 64 }, full_name: { type: 'string', minLength: 1, maxLength: 100 }, role: { type: 'string', maxLength: 20 } } } } },
     async (req, reply) => {
       const b = req.body as { username: string; full_name: string; role: string };
-      return reply.code(201).send(await createUser(pool, actorOf(req.auth!), { username: b.username, fullName: b.full_name, role: b.role }));
+      const r = await createUser(pool, actorOf(req.auth!), { username: b.username, fullName: b.full_name, role: b.role });
+      return reply.code(201).send({ ...r, activation_url: await activationUrl(r.username, r.activation_code) });
     });
   app.get('/api/v1/users', { preHandler: guard(pool, { roles: OFFICE, full: true }) }, async (req) => listUsers(pool, actorOf(req.auth!)));
   app.post<{ Params: { id: string } }>('/api/v1/users/:id/deactivate', { preHandler: guard(pool, { roles: OFFICE, full: true }) },
@@ -97,7 +99,11 @@ export function registerIdentityRoutes(app: FastifyInstance, pool: Pool, storage
   app.post<{ Params: { id: string } }>('/api/v1/users/:id/totp/reset', { preHandler: guard(pool, { roles: ['admin'], full: true }) },
     async (req, reply) => { await resetTotp(pool, actorOf(req.auth!), req.params.id); return reply.code(204).send(); });
   app.post<{ Params: { id: string } }>('/api/v1/users/:id/activation', { preHandler: guard(pool, { roles: OFFICE, full: true }) },
-    async (req) => reissueActivation(pool, actorOf(req.auth!), req.params.id));
+    async (req) => {
+      const r = await reissueActivation(pool, actorOf(req.auth!), req.params.id);
+      const u = (await pool.query('SELECT username FROM app_user WHERE id = $1', [req.params.id])).rows[0];
+      return { ...r, activation_url: u ? await activationUrl(u.username, r.activation_code) : null };
+    });
 
   // ------------------------------------------------------------ dispositivos
   app.get<{ Querystring: { status?: string; user_id?: string } }>('/api/v1/devices', { preHandler: guard(pool, { roles: READERS, full: true }) },
@@ -164,6 +170,14 @@ export function registerIdentityRoutes(app: FastifyInstance, pool: Pool, storage
   // App Android: datos PÚBLICOS de Firebase para que el teléfono se registre (sin sesión: la app los pide al arrancar) y registro del token.
   // Web pública y app Android: dónde está la aplicación de esta instalación (botón «Acceder», arranque de la app) y la demo si existe.
   // No es un secreto (el botón «Acceder» la muestra); la seguridad sigue siendo el inicio de sesión.
+  /** Enlace del QR de activación: dirección pública + ruta de la aplicación. Usuario y código van en el fragmento (#):
+   *  el navegador no lo envía al servidor, así que no queda en registros ni en proxies. */
+  async function activationUrl(username: string, code: string): Promise<string | null> {
+    const p = process.env.DECARGO_APP_PATH ?? '';
+    const base = await getPublicBase(pool).catch(() => null);
+    if (!base) return null;
+    return `${base}${/^[A-Za-z0-9_-]{16,64}$/.test(p) ? `/${p}/` : '/'}activar#u=${encodeURIComponent(username)}&c=${encodeURIComponent(code)}`;
+  }
   app.get('/api/v1/app/entry', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (_req, reply) => {
     const p = process.env.DECARGO_APP_PATH ?? '', demo = process.env.DECARGO_DEMO_URL ?? '';
     reply.header('cache-control', 'no-store');
