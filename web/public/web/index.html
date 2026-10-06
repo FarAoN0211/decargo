@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#123d4e" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="description" content="DECARGO: software autoalojado para emitir y gestionar el Documento de Control Administrativo electrónico (DeCA) del transporte de mercancías por carretera." />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="stylesheet" href="/web/web.css" />
+  <title>DECARGO · Documento de control electrónico del transporte</title>
+</head>
+<body>
+  <a class="skip" href="#contenido">Saltar al contenido</a>
+  <header class="top">
+    <div class="wrap top-in">
+      <a class="brand" href="/"><img src="/decargo-logo.png" alt="DECARGO" /></a>
+      <nav aria-label="Secciones">
+        <a href="#que-es">Qué es</a>
+        <a href="#funciones">Funciones</a>
+        <a href="#android">App Android</a>
+        <a href="#instalacion">Instalación</a>
+      </nav>
+      <a class="btn btn-primary js-acceder" href="#acceder">Acceder</a>
+    </div>
+  </header>
+
+  <main id="contenido">
+    <section class="hero">
+      <div class="wrap">
+        <h1>El documento de control del transporte, en digital y en tu propio servidor</h1>
+        <p class="lead">DECARGO es un software para emitir y gestionar el <strong>Documento de Control Administrativo electrónico (DeCA)</strong> del transporte público de mercancías por carretera: la oficina prepara el transporte y el conductor lleva el documento y su código QR en el teléfono.</p>
+        <div class="actions">
+          <a class="btn btn-accent js-demo" href="#probar" aria-describedby="demo-nota">Probar DECARGO</a>
+          <a class="btn btn-primary js-acceder" href="#acceder">Acceder</a>
+        </div>
+        <p id="demo-nota" class="small muted js-demo-nota">Entorno de demostración: próximamente.</p>
+      </div>
+    </section>
+
+    <section id="que-es" class="band">
+      <div class="wrap two">
+        <div>
+          <h2>Qué es DECARGO</h2>
+          <p>Desde el 5 de octubre de 2026 el documento de control del transporte de mercancías por carretera es digital. DECARGO genera ese documento en PDF con un código QR y un enlace https propio, y lo pone a disposición del conductor y de quien deba consultarlo.</p>
+          <p>Se ha desarrollado a partir de la Orden FOM/2861/2012 y de la Resolución de 5 de junio de 2026 de la Dirección General de Transporte por Carretera y Ferrocarril. La empresa que emite el documento es responsable de sus datos; DECARGO es la herramienta.</p>
+        </div>
+        <div class="card">
+          <h3>Autoalojado, no un servicio centralizado</h3>
+          <p>Cada empresa instala DECARGO en su propia infraestructura. Los transportes, documentos, conductores y copias de seguridad se quedan en su servidor.</p>
+          <p class="small muted">Proyecto en desarrollo activo. La documentación jurídica del proyecto es una investigación técnica, no asesoramiento legal.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="funciones">
+      <div class="wrap">
+        <h2>Funciones principales</h2>
+        <ul class="grid">
+          <li><h3>DeCA en PDF con QR</h3><p>Documento PDF con su código QR y enlace https de descarga directa. Modelo propio o carta de porte con casillas numeradas.</p></li>
+          <li><h3>Versiones y trazabilidad</h3><p>Los cambios (vehículo, conductor) generan una versión nueva con el mismo enlace; las anteriores se conservan. Registro de auditoría encadenado.</p></li>
+          <li><h3>App para conductores</h3><p>El conductor ve su transporte, el DeCA y el QR, también sin cobertura, y avisa cuando termina su parte o el transporte.</p></li>
+          <li><h3>Avisos al conductor</h3><p>Aviso al asignar un transporte y ante cualquier cambio. En la app Android, el aviso enciende la pantalla.</p></li>
+          <li><h3>Agenda de empresas y lugares</h3><p>Cargadores, destinatarios y lugares de carga y descarga con su ubicación para el conductor.</p></li>
+          <li><h3>Control de caducidades</h3><p>Documentos de conductores, vehículos y empresa (ITV, tacógrafo, seguros…) con avisos antes de que caduquen.</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="android" class="band">
+      <div class="wrap two">
+        <div>
+          <h2>App para conductores</h2>
+          <p>La app Android muestra la misma aplicación que el navegador y añade avisos que encienden la pantalla aunque el teléfono esté bloqueado.</p>
+          <p>Es la misma app para cualquier instalación de DECARGO: se conecta al servidor de la empresa del conductor, y la dirección del servidor se puede cambiar desde la propia app.</p>
+          <h3>Instalación</h3>
+          <ol>
+            <li>Descarga el archivo APK en el teléfono Android.</li>
+            <li>Ábrelo y, si Android lo pide, permite instalar aplicaciones de este origen.</li>
+            <li>Entra con tu usuario. La primera vez, la oficina debe autorizar el teléfono.</li>
+            <li>En el menú ☰ → Avisos, concede los permisos que se indican.</li>
+          </ol>
+        </div>
+        <div class="card" aria-live="polite">
+          <h3>Descarga</h3>
+          <dl class="apk">
+            <dt>Versión</dt><dd class="js-apk-version">—</dd>
+            <dt>Publicada</dt><dd class="js-apk-date">—</dd>
+            <dt>Tamaño</dt><dd class="js-apk-size">—</dd>
+            <dt>SHA-256</dt><dd class="mono js-apk-sha">—</dd>
+          </dl>
+          <a class="btn btn-primary js-apk-link" href="/app/decargo.apk" hidden>Descargar APK para Android</a>
+          <p class="small muted js-apk-none">Comprobando la versión publicada…</p>
+          <p class="small muted">Puedes comprobar que el archivo no se ha alterado comparando su huella SHA-256 con la de esta página.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="instalacion">
+      <div class="wrap">
+        <h2>Instalar DECARGO en tu empresa</h2>
+        <p>DECARGO está pensado para instalarse en infraestructura propia: un servidor de la empresa o un servidor contratado por ella.</p>
+        <div class="two">
+          <div class="card">
+            <h3>Linux</h3>
+            <p><strong>Requisitos:</strong> Docker y Docker Compose, 2 GB de RAM y una dirección https (dominio y certificado) para los QR de los DeCA.</p>
+<pre><code>git clone https://github.com/FarAoN0211/decargo.git
+cd decargo
+./instalar.sh</code></pre>
+            <p class="small muted">El instalador comprueba los requisitos, configura, arranca y crea el primer administrador.</p>
+          </div>
+          <div class="card">
+            <h3>Windows 10/11</h3>
+            <p>Con <strong>Docker Desktop</strong> (motor WSL 2): descarga DECARGO y haz doble clic en <code>INSTALAR-WINDOWS.bat</code>. El instalador prepara WSL y Ubuntu y deja DECARGO en marcha.</p>
+            <p><strong>Actualizaciones:</strong> copia de seguridad y <code>./deca up</code> (en Windows, <code>deca-windows.ps1 actualizar</code>). Las migraciones nunca borran datos.</p>
+            <p class="small">Código, guía de instalación y licencia: <a href="https://github.com/FarAoN0211/decargo" rel="noopener">github.com/FarAoN0211/decargo</a>. Gratuito; no se puede vender (Apache 2.0 con «Commons Clause»).</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="proyecto" class="band">
+      <div class="wrap">
+        <h2>Sobre el proyecto</h2>
+        <p>DECARGO es un proyecto en desarrollo para empresas de transporte que quieren cumplir con el documento de control electrónico sin depender de una plataforma ajena. Prioriza que funcione, que sea sencillo y que los datos queden en manos de la empresa.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-in">
+      <span>DECARGO</span>
+      <a class="js-acceder" href="#acceder">Acceder</a>
+    </div>
+  </footer>
+  <script src="/web/web.js" defer></script>
+</body>
+</html>

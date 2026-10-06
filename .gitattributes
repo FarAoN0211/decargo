@@ -1,0 +1,10 @@
+# Los scripts de Linux deben llegar con finales de línea LF aunque se clone en Windows (si no, bash falla dentro de WSL).
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.apk binary
+*.jar binary
+*.ttf binary

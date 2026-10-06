@@ -1,0 +1,20 @@
+# Configuración y secretos de cada instalación (nunca al repositorio)
+.env
+.env.*
+!.env.example
+.dev-credentials
+# Dependencias y compilados
+node_modules/
+dist/
+*.log
+# Informes de las pruebas (se generan en cada instalación)
+informes/
+# APK compilada y sus metadatos (se generan con scripts/publish-apk.sh; se publican como «release»)
+web/public/app/
+# Herramientas locales
+graphify-out/
+.agents/
+.codex/
+.claude/
+.vscode/
+.idea/

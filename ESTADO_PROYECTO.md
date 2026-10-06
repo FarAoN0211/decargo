@@ -1,0 +1,237 @@
+<img src="imagenes/decargo.png" alt="DECARGO" width="260">
+
+# DECARGO · Estado del proyecto
+
+Plataforma autogestionada para la creación, gestión, distribución, presentación, trazabilidad y conservación del DeCA (Documento de Control Administrativo) del transporte de mercancías por carretera en España.
+
+**Última actualización:** 2026-10-03 · **Fase:** bloques 1 y 2, TOTP de oficina, **DeCA externo con cuotas y descargador anti-SSRF** y **publicación en la red local** terminados. La pila corre en la **<IP-DEL-SERVIDOR>:18080 (api) y :18081 (docs), sin HTTPS, solo en esa IP**. Guía de primeras pruebas: [`docs/PRUEBAS_LOCALES.md`](docs/PRUEBAS_LOCALES.md). Pendiente de tu decisión: FINALIZAR desde dispositivo pendiente. **Sin Internet: ningún puerto del router, ningún NPM.**
+
+## 0. Reglas del propietario que rigen la implementación
+
+- El proyecto se llama **DECARGO**. El logo está en `imagenes/decargo.png` (no moverlo).
+- No añadir funciones no solicitadas. DECARGO **no es un ERP**.
+- **Sin publicación a Internet.** No tocar router, NAT ni puertos. No configurar dominio, DNS ni certificados públicos.
+- **Cloudflare descartado** (sin `cloudflared`, perfiles, variables ni APIs de Cloudflare). La publicación futura será con **Nginx Proxy Manager (NPM)**, **infraestructura externa**, fuera del Compose, sin integrar ni configurar ahora.
+- Si una decisión aprobada resulta técnicamente incorrecta o choca con la normativa: **detenerse, documentarlo y consultar** antes de sustituirla.
+- Si surge una cuestión jurídica nueva: no inventar la respuesta; documentarla como pendiente.
+- Actualizar este documento tras cada modificación relevante.
+- Tras el primer bloque: **detenerse** y presentar el informe de 25 puntos.
+
+## 0 bis. Dónde corre esto (importante)
+
+- **Máquina de despliegue y de trabajo: <IP-DEL-SERVIDOR>** (`<servidor>`, enp1s0). Allí está el directorio real: `<carpeta-de-decargo>`.
+- El **portátil (<IP-DEL-PORTÁTIL>)** solo monta ese disco por sshfs en `<inicio>/servidor`. **No se ejecuta Docker ni pruebas del portátil contra ese directorio**: el `.env` es único y compartido, y hacerlo cambió secretos y direcciones de la pila de la .130 (T48).
+- Las pruebas **destructivas** (`vertical-test`, `clean-restore-test`, `identity-test restore-check`, `destroy-test-data`) **no se ejecutan contra una pila con datos**. Se ejecutan en una copia desechable (p. ej. `/tmp/decargo-regresion`, con su propio `./deca init`) o en una .130 vacía.
+- En la .130 hay otros proyectos Docker (jellyfin, qbittorrent, sazon, tachopilot…). DECARGO solo usa sus puertos 18080 y 18081, en la IP de la LAN.
+
+## 1. Mapa de documentos
+
+| Documento | Contenido |
+|---|---|
+| [`REQUISITOS_LEGALES_DECA.md`](REQUISITOS_LEGALES_DECA.md) | 50 requisitos legales con fuente e interpretación. Pendientes jurídicos P-01 a P-13 |
+| [`docs/01_flujos.md`](docs/01_flujos.md) | Casos A a K |
+| [`docs/02_amenazas.md`](docs/02_amenazas.md) | Modelo de amenazas T01 a T41 y análisis «3 bis» de FINALIZAR / DeCA EXTERNO desde dispositivo pendiente |
+| [`docs/PRUEBAS_LOCALES.md`](docs/PRUEBAS_LOCALES.md) | Guía de primeras pruebas por la API en la red local |
+| [`docs/03_arquitectura_y_diseno.md`](docs/03_arquitectura_y_diseno.md) | Arquitectura y diseño; §20 decisiones, §21 D-05, §22 publicación futura (NPM), §23 P-11, §24 diferencias del bloque 1, §25 bloque 2 |
+| [`fuentes/`](fuentes/) | Copias del texto oficial leído (BOE) |
+| [`imagenes/decargo.png`](imagenes/decargo.png) | Logo |
+
+## 2. Legislación comprobada (resumen)
+
+- **DeCA digital obligatorio desde el 5/10/2026** (Ley 9/2025, DT 8ª).
+- **Resolución de 5/6/2026** (BOE-A-2026-12784): PDF nativo ≤5 MB; QR dentro del PDF con URL única https/TLS≥1.2; descarga directa sin credenciales ni botones; fecha/hora de creación y modificación; conservación **al menos un año**; la URL se **puede** desactivar a los 7 días naturales del fin del servicio; modificación por mismo PDF o nuevo PDF; firma no obligatoria.
+- **Orden FOM/2861/2012** arts. 6 (a–h), 7, 8, 9 (con RD 70/2019 y Orden TRM/282/2026).
+- Sanciones: LOTT 141.17 (401 a 600 €) y 140.9 (4.001 a 6.000 €).
+
+## 3. Decisiones D-01 a D-12 (todas aprobadas; ver doc. 03 §20)
+
+D-01 stack (TypeScript, Fastify, PostgreSQL, Caddy cuando sea útil localmente, restic) · D-02 `api`/`docs` separados, `docs` mínimo y de solo lectura · D-03 método 1 normal, método 2 solo si necesario · D-04 1 transporte = 1 DeCA · D-05 dispositivo pendiente con sesión limitada de 72 h, máx. 3, PIN opcional, primer dispositivo por contraseña temporal · D-06 sin firma · D-07 URL pública desactivable a los 7 días, documentos no se eliminan · **D-08 NPM externo futuro (sin Cloudflare)** · D-09 backup restic · D-10 «al menos un año» en calendario, `retain_not_before`, sin purga automática · D-11 Vue · D-12 solo español.
+
+Valores aprobados: purga local 24 h desde `finished_at` del servidor; sesión limitada 72 h; 3 pendientes. Provisional: caducidad de contraseña temporal 72 h.
+
+## 4. Cuestiones jurídicas abiertas
+
+P-01 a P-13 siguen **abiertas**. **P-11 bloquea el cierre de la v1:** no se acepta como solución definitiva la entrega manual por la oficina; antes de cerrar la v1 debe definirse y documentarse un mecanismo sencillo y seguro para la contraparte, una vez confirmado el alcance legal. Detalle en `REQUISITOS_LEGALES_DECA.md` §2.
+
+## 5. Primer bloque de implementación (esqueleto vertical)
+
+Alcance (sección 23 de las instrucciones): monorepo, Docker Compose, PostgreSQL, migraciones, modelo mínimo, API mínima, servicio `docs` separado, rol PostgreSQL de solo lectura para `docs`, almacenamiento persistente, generación programática de un DeCA PDF **de prueba** (texto real, metadatos, QR vectorial incrustado), token seguro, SHA-256, descarga directa local, persistencia tras recrear contenedores, backup restic y restauración.
+Fuera de este bloque: interfaz de administración, PWA, usuarios, notificaciones, dispositivos, DeCA externo, TOTP, publicación.
+
+### Resultado del bloque 1
+
+- [x] Documentación revisada (Cloudflare fuera, NPM externo futuro, D-05, P-11).
+- [x] Monorepo, Dockerfile y Compose (`db`, `migrate`, `api`, `docs`; `backup` y `restore` en el perfil `tools`).
+- [x] PostgreSQL 16.15, migración `0001_init.sql`, roles `deca_api`, `deca_docs`, `deca_backup`.
+- [x] API mínima (`/healthz`, endpoints de prueba `/api/v1/dev/*`) y servicio `docs` separado de solo lectura.
+- [x] PDF nativo (pdf-lib, fuente DejaVu embebida), QR vectorial incrustado, token de 256 bits, SHA-256, almacén por hash.
+- [x] Prueba vertical: **73/73** comprobaciones (`informes/prueba-vertical-20261003T141211Z.md`).
+- [x] Prueba de restauración en entorno limpio: **23/23** (`informes/restauracion-limpia-20261003T140856Z.md`): 7 DeCA, 7 versiones, 7 filas de auditoría, 7 documentos, 7 de 7 tokens recuperables, restauración en 24 s.
+- [x] `README.md` de instalación, backup y restauración.
+
+### Estructura
+
+```
+DeCA/ (DECARGO)
+├─ docker-compose.yml  .env.example  deca (script)  README.md  ESTADO_PROYECTO.md  REQUISITOS_LEGALES_DECA.md
+├─ server/        Dockerfile, package.json, migrations/ (0001_init.sql, grants.sql), src/{api,docs,pdf,common,migrate.ts,cli.ts}
+├─ deploy/backup  imagen alpine + restic + pg_dump/pg_restore (decargo-backup.sh)
+├─ deploy/tools   imagen de pruebas (poppler, pyzbar): no es parte del despliegue
+├─ scripts/       vertical-test.sh, clean-restore-test.sh
+├─ docs/  fuentes/  imagenes/  informes/
+```
+
+### Operación (`./deca`)
+`init` · `up` · `down` · `status` · `verify` · `backup` · `snapshots` · `restore [snapshot]` · `destroy-test-data` (protegido: exige confirmación y al menos un snapshot).
+
+### Hallazgos de seguridad y calidad durante el bloque
+1. **Corregido:** el límite de peticiones de `docs` no se aplicaba (el plugin se registraba después de declarar la ruta). Ahora 600/min por IP, probado.
+2. **Corregido:** una variable exportada en la shell enmascaraba el `.env` (Compose prioriza el entorno) y dejó una `APP_KEY` antigua tras restaurar. `./deca` descarta esas variables al arrancar. `verify` ahora comprueba que los tokens se pueden descifrar.
+3. **Corregido (1.1):** `docs` ya no tiene salida a Internet ni resuelve nombres externos (red `edge` sin NAT + `dns: [127.0.0.1]`), y sigue accesible por su puerto publicado. Prueba: `informes/docs-red-20261003T142442Z.md` (15/15). Límite: `docs` alcanza servicios del propio anfitrión por la puerta de enlace. `api` conserva su red actual.
+4. **Aclarado (1.2):** el backup actual (mismo equipo y disco) es **solo de desarrollo**. El backup operativo exigirá una copia independiente del almacenamiento principal (destino por decidir). Sin planificador ni retención de snapshots.
+5. **Abierto:** la retención de 90 días de los logs públicos no está implementada (los logs van a la salida estándar; falta rotación).
+6. **Abierto:** el rate limit cuenta por IP de conexión; detrás de un proxy habrá que configurar la IP de cliente (T30) o se limitaría a todos juntos.
+7. `.env` y `.env.from-backup` contienen todos los secretos (permisos 600, fuera de git). Los endpoints de prueba usan una clave estática (`DEV_API_KEY`) y deben desactivarse (`DEV_ENDPOINTS=0`) fuera de las pruebas.
+8. `npm audit` (producción): 0 vulnerabilidades.
+9. Las imágenes están fijadas por etiqueta, no por *digest*.
+
+### Diferencias entre diseño e implementación
+Tabla completa en `docs/03_arquitectura_y_diseno.md` §24 (registro de accesos en stdout en lugar de BD, 503 en fallos internos, healthcheck en puerto interno, UUID v4, sin Caddy/web, backup manual, etc.).
+
+### Cuestiones jurídicas nuevas
+Ninguna. Se mantienen P-01 a P-13; **P-11 bloquea el cierre de la v1**.
+
+### Correcciones aplicadas antes del bloque 2 (autorizadas por el propietario)
+- **1.1 `docs` sin salida a Internet:** red `edge` (bridge sin NAT de salida) + `dns: [127.0.0.1]`; sigue recibiendo conexiones por su puerto publicado. Probado, incluido un origen externo simulado (`informes/docs-red-20261003T144038Z.md`, 15/15). Límite: alcanza servicios del propio anfitrión por la puerta de enlace de su red.
+- **1.2 Backup:** el actual es **solo de desarrollo** (mismo equipo y disco). El operativo exigirá una copia independiente; destino por decidir; sin servicios externos configurados.
+- **1.3 UUID v4** se mantiene por decisión del propietario.
+
+## 5 bis. Segundo bloque: identidad, sesiones y dispositivos (terminado)
+
+Resultados: **143/143** pruebas de integración (`informes/identidad-20261003T143637Z.md`), **24/24** de backup, destrucción y restauración con identidad (`informes/identidad-restauracion-20261003T143659Z.md`), y las pruebas del bloque 1 siguen en verde (vertical 73/73, servidor limpio 25/25, red de `docs` 15/15).
+
+- **Implementado:** usuarios con roles `admin`, `oficina`, `conductor`, `solo_lectura`; Argon2id; activación con credencial temporal de un solo uso; primer dispositivo AUTORIZADO; D-05 completo (pendiente de solo lectura, 72 h, máx. 3, autorizar y revocar); access token de 10 min + refresh rotatorio con detección de reutilización; fuerza bruta; desactivación; asignación de conductor a transporte; auditoría.
+- **Decisión vigente (propietario):** el dispositivo pendiente es de **SOLO LECTURA**. FINALIZAR y AÑADIR DeCA EXTERNO **no están habilitados**; análisis completo en `docs/02_amenazas.md` («3 bis»). **Decisión pendiente: tuya.**
+- **Sesiones al restaurar:** se **invalidan todas** (decisión documentada en T39); los dispositivos conservan su confianza.
+- **Valores provisionales** (a confirmar): access 10 min; conductor autorizado refresh 30 d / sesión 90 d; oficina refresh 8 h / sesión 24 h; credencial de activación 72 h y 5 intentos. Aprobados: sesión pendiente 72 h y 3 pendientes.
+- Detalle de tablas, endpoints, parámetros y diferencias de diseño: `docs/03_arquitectura_y_diseno.md` §25.
+
+### TOTP de oficina (terminado, antes de publicar)
+
+Resultados: **185/185** pruebas de integración (`informes/identidad-20261003T145403Z.md`), **26/26** de restauración (`informes/identidad-restauracion-20261003T145551Z.md`); vertical 73/73, servidor limpio 25/25 y red de `docs` 15/15 siguen en verde. Validado contra los **6 vectores del RFC 6238**.
+
+- **Qué hace:** `admin`, `oficina` y `solo_lectura` exigen código TOTP; sin él, su sesión solo permite configurarlo (`MFA_PENDING`); con él ya configurado, el login lo exige antes de crear sesión o dispositivo; cada código vale una vez; fallos suman al bloqueo por fuerza bruta; reemitir la credencial no salta el segundo factor.
+- **Operación:** `./deca reset-totp --username u` (autenticador perdido; también `POST /users/:id/totp/reset` para admin). Sin códigos de recuperación (no solicitados).
+- **Tras restaurar:** los secretos TOTP (cifrados con una clave derivada de `APP_KEY`) siguen funcionando porque `APP_KEY` se recupera del backup.
+- **Riesgos residuales:** T42 alta con solo contraseña antes de que el titular enrole; T43 secreto y `APP_KEY` en la misma copia; T44 pérdida del autenticador del único admin; T45 phishing en tiempo real; T46 hace falta NTP.
+- Detalle y decisiones propias: `docs/03_arquitectura_y_diseno.md` §26.
+
+### Antes de publicar (lista de comprobación)
+- [x] Segundo factor para oficina.
+- [~] IP de cliente: **resuelta en la red local** (la API ve la IP real); hay que repetirlo detrás de NPM (T30).
+- [ ] Decidir dónde guardan los tokens las pantallas web y la PWA (T41).
+- [ ] Backup operativo independiente del disco principal (destino por decidir).
+- [ ] Desactivar `DEV_ENDPOINTS` y las URL `http` de prueba (`ALLOW_INSECURE_PUBLIC_URL`).
+- [ ] Publicación vía NPM: HTTPS con TLS ≥ 1.2, sin login/CAPTCHA/redirecciones en la ruta de `docs`, probada con un dispositivo externo.
+- [ ] Cerrar P-11 (acceso posterior de la contraparte).
+- [ ] NTP y alerta de deriva de reloj (T46).
+
+### DeCA externo con cuotas y descargador anti-SSRF (terminado)
+
+- **Habilitado también para el dispositivo pendiente** (decisión del propietario). **FINALIZAR sigue deshabilitado.**
+- **Descargador anti-SSRF** (`server/src/external/`): solo https y puerto 443; sin IP literal en ninguna forma; todas las direcciones resueltas deben ser públicas (privadas, loopback, metadatos de nube, CGNAT, IPv4 mapeada, NAT64, 6to4, Teredo y demás bloqueadas); conexión a la IP ya validada (anti-rebinding); ≤3 redirecciones revalidadas; TLS ≥1.2 verificado; sin compresión; 15 s; 5 MB; debe parecer un PDF completo; concurrencia 2.
+- **Cuotas:** 5 intentos/hora y 15/día por usuario (cuentan también los fallidos), 5 documentos por transporte. Solo transportes propios en PENDIENTE o EN_CURSO y visibles para ese dispositivo.
+- **Resultado:** `validated=false` siempre; `PENDIENTE_DE_REVISION`; la oficina lo ve, lo descarga y lo marca `REVISADO` (solo «mirado»). No sustituye ni toca ningún DeCA propio. P-02, P-04 y P-12 siguen abiertas.
+- **Pruebas:** `scripts/ssrf-test.sh` **59/59** (incluye `localtest.me`, `127.0.0.1.nip.io` y una descarga real de un PDF público); sección 15 de la prueba de identidad (cuotas, aislamiento, auditoría, permisos); `verify` comprueba el hash de cada DeCA externo.
+- **Hallazgos:** (1) la regla `::ffff:0:0/96` de Node casa con **todas** las IPv4 y bloqueaba cualquier descarga: corregido; (2) `https://.com/` se aceptaba: ahora se valida cada etiqueta del nombre; (3) el plazo total no se aplicaba durante la lectura del cuerpo: corregido.
+- Detalle: `docs/03_arquitectura_y_diseno.md` §27.
+
+### Regresión completa de esta entrega (en una copia desechable, instalación limpia)
+| Prueba | Resultado |
+|---|---|
+| Descargador anti-SSRF (`ssrf-test.sh`) | **59/59** (también ejecutada en la .130) |
+| Identidad, TOTP y DeCA externo (`identity-test.mjs run`) | **233/233** |
+| Backup, destrucción y restauración con todos los datos (`restore-check`) | **27/27** |
+| Núcleo vertical (`vertical-test.sh`) | **73/73** |
+| Restauración en servidor limpio (`clean-restore-test.sh`) | **25/25** |
+| Red de `docs` (`docs-network-test.sh`) | **15/15** |
+| Publicación local en la .130 (`lan-test.sh`, no destructiva) | **42/42** |
+
+### Publicación en la red local (terminada)
+- `api` en `<IP-DEL-SERVIDOR>:18080` y `docs` en `<IP-DEL-SERVIDOR>:18081`; `PUBLIC_DOCS_BASE_URL=http://<IP-DEL-SERVIDOR>:18081`. **Nunca `0.0.0.0`.** Comprobado desde otro equipo de la LAN y con `scripts/lan-test.sh` (42/42): no responde por `127.0.0.1` ni por ninguna otra interfaz de la .130.
+- La API ve la **IP real** del dispositivo de la red local.
+- **Sin HTTPS** (T47): solo en una red de confianza. `DEV_ENDPOINTS=1` sigue activo para poder crear datos de prueba.
+- `docs` sigue sin salida a Internet.
+- Cortafuegos de la .130: `ufw` inactivo.
+
+### Hallazgos de seguridad del bloque 2
+1. **Corregido:** el `refresh` recalculaba la vigencia desde la creación y podía **resucitar una sesión expirada**; ahora respeta `expires_at`. Lo detectó la prueba de expiración.
+2. **Corregido:** `session_user` es palabra reservada de PostgreSQL (la migración 0002 falló y se revirtió entera antes de aplicarse).
+3. **Resuelto (T38):** el TOTP de oficina está implementado y probado (sección «TOTP de oficina»). Riesgos nuevos acotados: T42 a T46.
+4. **Residual (T30):** la IP de cliente que ve la API es la de la puerta de enlace de Docker; el bloqueo por IP cuenta a todos juntos hasta que se defina el proxy.
+5. **Residual (T41):** dónde guarda cada cliente web sus tokens se decidirá con las pantallas.
+6. **Residual (T40):** sin purga de sesiones, refresh y contadores caducados.
+7. **Residual:** un dispositivo revocado que siga desconectado conserva lo ya guardado en local; un reintento legítimo de refresh tras perder la respuesta revoca la sesión (hay que volver a entrar).
+
+### Siguiente paso propuesto (a tu decisión)
+Primero tus decisiones sobre FINALIZAR y DeCA EXTERNO desde dispositivo pendiente (T31). Después, la política de modificación versionada (método 1) o el TOTP de oficina, o las pantallas, según prefieras.
+
+## 5 ter. Tercer bloque: primera interfaz web (desplegada y probada)
+
+- **Qué hay:** servicio `web` (Vue 3 + nginx sin privilegios, CSP estricta, `/api` por proxy interno, `/api/v1/dev/` → 404). Oficina: Inicio, Transportes (lista, alta, detalle, asignar conductor y vehículos, PDF, QR), Conductores, Vehículos. Conductor (móvil): transporte actual y siguiente, VER DeCA, MOSTRAR QR, FINALIZAR deshabilitado. El PDF y el QR salen del único generador (`issueDeca`) y llevan la misma URL (`deca.public_url`).
+- **Migraciones nuevas:** 0005 (`deca.public_url`, índice de vehículos vigentes) y 0006 (Web Push: `push_subscription`, `push_event`).
+- **Web Push (añadido por el propietario, revisado):** `api` envía «Nuevo transporte asignado» (solo `transport_id`, sin datos personales) a dispositivos AUTORIZADOS del conductor; los pendientes no reciben nada (D-05). El endpoint de suscripción se limita a https y a los proveedores conocidos (FCM, Mozilla, Apple, Windows). Revocar un dispositivo borra su suscripción. Un fallo del proveedor nunca revierte la asignación. Service worker sin caché (todo va a la red). Requiere HTTPS: por `http://<IP-DEL-SERVIDOR>:18082` no funcionará.
+- **Corregido en la revisión:** `./deca init` no generaba las claves VAPID y `docker-compose.yml` las exige, de modo que una instalación limpia no arrancaba. Ahora las genera con `openssl` (validadas con `web-push`).
+- **Publicación (hecha por el propietario con NPM, `<IP-DEL-SERVIDOR>`, panel en el puerto 84):** `https://decargo.duckdns.org` (Let's Encrypt) sirve la web y `/d/` el servicio documental; `/api/v1/dev/` da 404 desde fuera. `PUBLIC_DOCS_BASE_URL` ya es https. Los 5 DeCA creados por el seed antes del cambio conservan su URL `http://<IP-DEL-SERVIDOR>:18081/...`: son de desarrollo y se pueden regenerar.
+- **Avisos de la publicación:** (1) RESUELTO: `admin.dev` y `oficina.dev` ya tienen TOTP enrolado (auditoría 3/10/2026 20:01), así que la contraseña sola no basta desde Internet; (4) RESUELTO: `web` toma la IP real con `set_real_ip_from 172.16.0.0/12` + `X-Forwarded-For` (última dirección, la que añade NPM). NPM corre en el mismo equipo y llega por la pasarela de Docker (172.16.18.1); los clientes de la LAN llegan con su IP real y no son de confianza, así que no pueden falsearla. Comprobado: una petición por `https://decargo.duckdns.org` queda en `login_throttle` con la IP del cliente (antes, con la de la pasarela), y la API directa ignora un `X-Forwarded-For` falsificado. Siguen abiertos: (2) NPM sin HSTS, (3) el puerto 80 no redirige a https, (5) `DECA_TEST_MODE=1` y `DEV_ENDPOINTS=1` activos, (6) el envío real de Web Push no está probado.
+- **Revisión y pruebas (3/10/2026, copia desechable en la .130; informes en `informes/`):** sección 16 de `identity-test.mjs` escrita y superada: **405 comprobaciones, 0 fallos**, y restauración en limpio **29/0** (con huellas nuevas de vehículos, asignaciones, transportes y URL públicas). Cubre vehículos, validación de transportes (13 casos), PDF/QR (misma URL en PDF, QR de oficina y QR del conductor; descarga directa con el mismo SHA-256), emisión posterior y cambios de vehículo, matriz de permisos (48 respuestas), IDOR del conductor y reasignación, fugas, cabeceras y proxy de la web, desactivar/reactivar, seed idempotente sin contraseñas en el volcado, transportista efectivo y Configuración.
+- **Defectos encontrados y corregidos por las pruebas:** (1) «emitir DeCA después» y «cambiar vehículos» daban 500: `SELECT … FOR UPDATE` exige `UPDATE` sobre `transport` y la API no lo tiene (es inmutable); ahora se serializa con un bloqueo consultivo por transporte; (2) `./deca init` no generaba claves VAPID; (3) `destroy-test-data` y las suites tenían escritos a mano los nombres `decargo_*`: en una copia intentaron borrar los volúmenes reales (falló porque estaban en uso; no se perdió nada). Ahora todos los nombres salen del proyecto de compose en curso.
+- **Transportista efectivo (b):** ya no es fijo; en el alta puede ser otra empresa (por defecto, la propia). **Cambiarlo con el DeCA ya emitido** exige la modificación con nueva versión del PDF (método 1, doc. 03 §10), no implementada: depende de P-13. Es el siguiente bloque propuesto, junto con «Cambiar vehículo».
+- **Traslado de servidor (`docs/TRASLADO_SERVIDOR.md`):** web → Configuración (solo administrador): dirección pública de los DeCA guardada en la base de datos (`app_setting`, migración 0007, viaja con los backups; manda sobre el `.env`), botón Comprobar (desde el servidor: «/» es DECARGO y «/d/» llega a documentos), lista «antes de usar con datos reales» y guía de 5 pasos. `./deca setup` (detecta IP local, pregunta dominio, comprueba puertos y arranca), `./deca config show|set-domain|set-ip`. Los DeCA ya emitidos conservan la dirección impresa en su QR; `docs` responde con cualquier dominio.
+- **Reemisión con la dirección actual (administrador):** un DeCA emitido con una dirección que ya no vale (otro dominio, IP local de pruebas) se reemite: PDF, token, URL y QR nuevos con los mismos datos; el anterior pasa a `SUPERSEDED`, se conserva íntegro y su URL sigue sirviendo su PDF. Botón por DeCA (detalle del transporte) y masivo (Configuración); auditoría `DECA_REISSUED`; `verify` cuenta también los sustituidos. Un transporte tiene siempre un único DeCA vigente (las consultas filtran `status='ACTIVE'`). Los 5 DeCA de ejemplo creados con la IP local siguen así hasta que el administrador pulse «Reemitir» (requiere su sesión con TOTP).
+- **Lugares de carga y descarga, empresa propia, interruptores y purga (3/10/2026):** cada transporte admite hasta 10 lugares de carga y 10 de descarga, cada uno con su empresa opcional (quien carga no tiene por qué ser quien descarga); el PDF los numera. Configuración (administrador) permite fijar los datos de la empresa = transportista efectivo por defecto de los DeCA nuevos, y desactivar el rótulo «DOCUMENTO DE PRUEBA» y los endpoints de prueba (ajustes en la base de datos, mandan sobre el `.env`, auditados, sin reiniciar). `./deca purge-examples` (servicio `maint` con el superusuario; la API sigue sin poder borrar): copia previa, borra transportes, DeCA y sus PDF, vehículos y usuarios no administradores; conserva administradores, empresa, ajustes y auditoría (con anotación `EXAMPLE_DATA_PURGED`); si el modo de pruebas está desactivado exige `--also-real`. Probada en copia desechable (purga 12/0, restauración 29/0, batería 405/0). Ejecutada en el stack real el 3/10/2026 21:30 UTC con autorización expresa del propietario (11 DeCA, 6 transportes, 7 vehículos, 4 usuarios, 11 PDF); `verify` sin problemas. Quedan `admin.dev`, la empresa y la auditoría.
+- **Desplegado en el stack real (3/10/2026):** migraciones hasta 0007; tras el despliegue: 5 usuarios, 5 transportes, 5 DeCA, auditoría íntegra, `verify` sin problemas.
+- **Pruebas antiguas repetidas tras los cambios (3/10/2026, copia desechable):** `lan-test` 46/0 (actualizada: incluye la web, exige que la dirección pública de los QR sea https y sin IP local), `docs-network-test` 15/0, `ssrf-test` 59/0, `clean-restore-test` 26/0 (ahora conserva los puertos y las imágenes de la copia y comprueba la web) y `vertical-test` 73/0. Nota: `vertical-test` no debe ejecutarse justo después de `docs-network-test` (que agota el límite de peticiones de `docs`: 429); en cadena fallaron 18 comprobaciones solo por eso, y sola pasa entera.
+- **Sesión del conductor y aviso reforzado (4/10/2026, desplegado):** el refresh token del conductor pasa a `localStorage` (no se pierde al salir o cerrar la aplicación; caduca en el servidor a los 30 días sin uso); el de oficina sigue en `sessionStorage`. Un fallo de red al abrir la app ya no cierra la sesión (pantalla «Sin conexión», reintento automático); las renovaciones se serializan entre pestañas (Web Locks); el servidor admite 60 s de gracia al reutilizar el token recién rotado **solo para conductores** (`REFRESH_REUSE_GRACE_SECONDS`; oficina sin gracia). Aviso push con `requireInteraction`, vibración y botón «Ver transporte». Batería 407/0, restauración 29/0. **Decisión de seguridad T41 (documentar):** el refresh token del conductor en `localStorage` es accesible a cualquier script de la página; se mitiga con CSP estricta (`script-src 'self'`, sin inline) y revocación por el servidor. **Límites:** la web no puede forzar que el teléfono encienda la pantalla (lo decide el canal de notificaciones de Android: prioridad «Urgente»); solo reciben avisos los dispositivos AUTORIZADOS; la entrega real del push no está verificada con un móvil.
+- **Prueba de aviso desde la oficina, con seguimiento (4/10/2026, desplegado):** Conductores → Dispositivos → «Probar aviso» (`POST /devices/:id/push-test`, solo oficina/administrador; oficina solo dispositivos de conductores) crea un seguimiento (`push_test`, migración 0008) y envía un push `TEST` con un UUID; el service worker del teléfono devuelve acuses sin sesión (`POST /push/ack`: recibido, mostrado, pulsado; UUID aleatorio, ventana de 10 min, respuesta uniforme 204) y la oficina ve «enviado → recibido → mostrado → pulsado» con diagnóstico. El listado de dispositivos indica si tienen los avisos activados. Se retiró el botón del lado del conductor. Batería 421/0, restauración 29/0. **Primer resultado real (4/10, 22:29 UTC):** enviado ✔, recibido ✔, mostrado ✔, pulsado ✘ → el aviso llega al teléfono y el navegador lo muestra; que no salte pop-up ni se encienda la pantalla depende de la importancia del canal de notificaciones de Android (ajuste del teléfono, no controlable desde una web). Pendiente: marca/modelo del móvil y navegador para indicar la ruta exacta; alternativa garantizada = app Android nativa (fuera de alcance).
+- **Actualización automática de la app (4/10/2026, desplegado):** la aplicación comprueba si hay versión nueva al abrirla, al volver a ella, al recuperar la red y cada minuto, y se recarga sola (no mientras se rellena un formulario); el service worker se registra con `updateViaCache: 'none'`. Importante: **ya hay DeCA reales (modo de pruebas desactivado): no ejecutar `./deca purge-examples`** (se niega sin `--also-real`).
+- **Control de documentos, ficha del conductor y modelo carta de porte (4/10/2026, desplegado):** batería 547/0, restauración 31/0, purga 14/0.
+  - *Documentos con caducidad* (migración 0010): conductores (DNI/NIE, permiso, CAP, tarjeta del conductor, reconocimiento, ADR, PRL, manipulador si hay alimentos…), vehículos (ITV, seguro, tacógrafo, extintores, impuesto, ADR, ATP y equipo de frío si hay alimentos) y empresa (visado MDP, seguros, RGSEAA). La aplicación no calcula caducidades: se anota la fecha impresa; el catálogo solo da pistas (ITV anual y luego semestral, ATP 6+3, tacógrafo 2 años, CAP y tarjeta 5). Pantalla «Caducidades», aviso en Inicio, insignia en el menú y aviso no bloqueante al preparar un transporte. Aviso configurable (30 días por defecto) y «transporta alimentos» en Configuración.
+  - *Tarjetas y dispositivos por vehículo*: combustible (con PIN cifrado AES-GCM, nunca en listados, auditoría al verlo) y VIA-T.
+  - *Ficha del conductor* (migración 0011): datos personales, domicilio, laborales y contacto de emergencia. DNI/NIE (letra comprobada), nº de Seguridad Social e IBAN **cifrados**, enmascarados y con consulta auditada (solo nombres de campo en la auditoría). IBAN validado (módulo 97 + dígitos de la cuenta) con banco identificado por el código de entidad (tabla orientativa; si falta, solo el código). Acceso: administrador y oficina. RGPD: minimización (art. 5.1.c), datos necesarios para la relación laboral.
+  - *Modelo «Carta de porte»* (migración 0012): el formulario con casillas 1-15 de la Orden FOM/2861/2012, nativo, con QR y fechas; elegible por empresa en Configuración (con ejemplo y formulario en blanco). Datos nuevos opcionales: precio, bultos, referencia de carga, temperatura, domicilio del transportista. Casilla 9 (conductor) solo si la empresa lo activa (por defecto no). Por defecto sigue el modelo DECARGO. Sin hacer: sello de la empresa como imagen, casillas 8.1 y 9.1 (modificaciones, P-13).
+  - *Purga* (`maint.ts`) ampliada: borra también tarjetas, fichas y documentos de lo eliminado y conserva los de la empresa.
+- **Investigación (sin implementar): base de datos nacional de empresas.** No hay una base oficial gratuita con NIF y domicilio buscable por nombre: BORME (API abierta, sin NIF fiable, desde 2009), DIRCE (agregado), AEAT VNif (solo verifica, con certificado) y servicios de pago (eInforma, APIEmpresas.es…). El domicilio fiscal tampoco sirve para lugares de carga/descarga. Recomendación: agenda propia de empresas con varios lugares por empresa + importación desde Excel/CSV + validación offline del NIF/CIF + búsqueda externa opcional con clave del proveedor. Datos de autónomos y contactos: RGPD y art. 19 LOPDGDD.
+- **Agenda de empresas y lugares (4/10/2026, desplegado; migración 0013):** cada empresa nueva del alta queda registrada (por NIF o nombre normalizado, sin pisar datos guardados) con sus lugares de carga/descarga, ubicación (lat/lon o enlace de mapa de proveedores conocidos, solo https) e indicaciones; el conductor ve «Cómo llegar». NIF/CIF/NIE validados sin conexión. Vehículos por tipo (tractora, semirremolque, camión rígido, remolque).
+- **Palets, referencias, precintos y domicilio completo (4/10/2026, desplegado; migración 0014):** palets, referencias y precintos por lugar, con totales cargado/descargado; «Nº y clase de bultos» se rellena solo con el total cargado; un número suelto se imprime como «10 palets». Código postal, localidad, provincia y país en empresa propia, agenda, cargador, transportista y cada lugar; la provincia se deduce del código postal o de la capital; un lugar en la misma calle que su empresa hereda sus datos. **Casillas 3 y 4 del DeCA:** solo localidad, provincia si es distinta y país si no es España; nunca la calle (el alta exige una localidad escrita o deducible: `localidad_requerida`). Casilla 2: consignatario con un dato por línea (razón social, domicilio, NIF de la agenda). Temperatura en Observaciones («Temperatura de transporte: … ºC»).
+- **Ciclo de vida del transporte (4/10/2026, desplegado):** *anular* (oficina, con motivo; estado CANCELADO; el DeCA y su URL se conservan; la API sigue sin poder borrar), *finalizar* por el conductor (solo su transporte y con dispositivo AUTORIZADO; fija la conservación mínima hasta el 31/12 del año siguiente), *cambiar vehículo* (nueva asignación y, si hay DeCA, nueva versión con el mismo enlace y QR anotando el cambio en la casilla 8.1). Al asignar o cambiar el conductor, si la carta de porte imprime sus datos, el DeCA recibe una versión nueva con el mismo enlace (casilla 9; el sucesivo en la 9.1). Versionado método 1 (`MODIFIED_SAME_PDF`), versiones anteriores intactas y auditadas.
+- **Pruebas (4/10/2026, copia desechable):** batería 677/0, restauración 32/0, purga 14/0 (informes en `informes/`).
+- **App Android para conductores (4/10/2026, desplegada; migración 0015; SIN PROBAR en un móvil real):** proyecto en `android/` (Kotlin, sin dependencias salvo Firebase Messaging y androidx.core). Es la misma web en un WebView (siempre igual y actualizada); lo nativo añade: avisos por **Firebase Cloud Messaging** (mensajes de datos de prioridad alta), que **encienden la pantalla** y abren un **aviso modal a pantalla completa** sobre la pantalla de bloqueo con el motivo («Nuevo transporte asignado · Granada → Madrid · fecha») y el botón «VER TRANSPORTE», que desbloquea y lleva a ese transporte. Panel de permisos en la pantalla del conductor (notificaciones, pantalla completa, mostrar sobre otras apps, batería). Enlaces externos (mapas) se abren fuera; PDF generados en la página se guardan/abren con el visor; compartir con el menú de Android; si no conecta, permite cambiar la dirección del servidor (traslado).
+  - *Servidor:* Firebase se configura desde **Configuración → App Android para conductores** subiendo `google-services.json` y la clave de la cuenta de servicio; se comprueba con Google antes de guardar y la clave privada se guarda **cifrada con APP_KEY** en `app_setting` (viaja con las copias). La app pide la parte pública en `GET /api/v1/app/fcm-config` (sin sesión) y registra su token en `POST /api/v1/driver/push/fcm`. `push_subscription.kind` = WEBPUSH | FCM. «Probar aviso» y los acuses funcionan igual. Envío por la API HTTP v1 (JWT RS256 firmado con `node:crypto`, sin dependencias nuevas).
+  - *Firebase:* proyecto `woven-goal-481709-n2` (antes «My First Project», vacío; la cuenta estaba en el límite de proyectos), app `es.decargo.app` registrada, API FCM v1 habilitada, sin Google Analytics. Falta descargar los dos JSON y subirlos en Configuración.
+  - *Distribución:* `https://decargo.duckdns.org/app/decargo.apk` (enlace en Configuración). Firma en `android/keystore/` + `android/keystore.properties` (excluidos del repositorio): **hay que guardar copia fuera del servidor**; sin ellos no se puede actualizar la app instalada. Compilar: `cd android && ./gradlew assembleRelease` y copiar a `web/public/app/decargo.apk`.
+  - *Xiaomi / Redmi / POCO (v1.1.0, 5/10/2026):* MIUI/HyperOS exige dos permisos propios que Android no deja pedir con un diálogo: «Mostrar en la pantalla de bloqueo» y «Abrir nuevas ventanas mientras se ejecuta en segundo plano». La app detecta la marca, consulta su estado (operaciones internas 10020/10021 de MIUI; si no se puede saber, pide comprobarlo) y el panel del conductor los muestra como obligatorios con un botón que abre «Otros permisos» de la app; también enlaza «Inicio automático». Con el segundo concedido, el aviso modal se abre aunque el móvil esté en uso.
+  - *Límites:* Android 14+ puede exigir conceder «pantalla completa» a mano (el panel lo detecta y abre el ajuste); con la pantalla encendida y sin «mostrar sobre otras apps» se ve como notificación emergente; algunas marcas (Xiaomi, Huawei…) necesitan además «inicio automático». Los avisos pasan por Google (solo tipo, transporte, localidades y fecha). El dispositivo de la app es nuevo para DECARGO: la oficina debe autorizarlo (D-05).
+- **Pantalla del conductor (5/10/2026, desplegado):** avisos y «Salir» en un menú de ajustes (☰) con punto rojo si faltan permisos; botón FINALIZAR en color activo (gris solo si no se puede).
+- **DeCA sin cobertura (5/10/2026, desplegado):** al cargar su lista con cobertura, la página guarda en el teléfono (IndexedDB) la lista y el PDF y el QR del DeCA **vigente** de cada transporte asignado (máx. 5; solo descarga versiones nuevas). Sin cobertura se enseñan con un aviso «copia guardada el …». Límites para no conservarlos indefinidamente: se borra lo finalizado, anulado o reasignado en la siguiente sincronización; todo caduca a los **7 días** de la última sincronización aunque no vuelva la red (`OFFLINE_DAYS` en `web/src/offline.ts`); se borra entero al salir, al entrar otro usuario o si el servidor rechaza la sesión. El service worker guarda solo la carcasa de la app (index.html y `/assets/`, nunca API, sesiones ni PDF) para que se abra sin red; el conductor entra en modo solo lectura con su copia y FINALIZAR queda deshabilitado hasta que vuelva la cobertura. El QR enseñado sin cobertura es el mismo; quien lo escanea necesita su propia conexión.
+- **Avisos de cualquier cambio en el transporte (5/10/2026, desplegado; migración 0016; app v1.2.0):** mismo aviso prioritario que la asignación para: crear el transporte con conductor (antes no avisaba), cambio de vehículo, asignar vehículos, emitir el DeCA después, reemitir el DeCA (individual y masivo: «el QR ha cambiado»), anular (con el motivo) y reasignar (el anterior recibe «Transporte retirado», el nuevo «Nuevo transporte asignado»). `push_event.type` = TRANSPORT_ASSIGNED / UPDATED / CANCELLED / UNASSIGNED. Se envían en segundo plano y nunca deshacen el cambio. Navegador y app muestran título y motivo; «Ver transporte» lleva al transporte (anulado/retirado: «Abrir DECARGO»).
+- **Estados, relevo y PIN para el conductor (5/10/2026, desplegado; migración 0017):** PENDIENTE = sin conductor, EN CURSO = con conductor, FINALIZADO, ANULADO (aparte). Se mantienen al crear, asignar y terminar tramos. *Relevo*: la oficina puede «Sustituir ahora» o «Programar relevo» (`transport_relay`; el actual conserva el transporte). FINALIZAR pregunta «el transporte completo» o «solo mi parte» (`POST /driver/transports/:id/finish-part`): le desaparece al conductor y pasa al relevo (que recibe el aviso y, si procede, entra en la casilla 9.1 del DeCA) o vuelve a PENDIENTE; historial de tramos en el detalle; auditoría `TRANSPORT_RELAY_SET`, `TRANSPORT_RELAY_CLEARED`, `TRANSPORT_LEG_FINISHED`. No se asigna conductor a transportes cerrados (409). *PIN*: botón «Tarjeta de combustible · PIN» en el transporte del conductor (`GET /driver/transports/:id/cards`): tarjetas de combustible y VIA-T de la tractora y el remolque asignados con su PIN; solo el conductor asignado con dispositivo AUTORIZADO; cada consulta auditada (`VEHICLE_ASSET_PIN_REVEALED`); nunca en la lista ni en la copia sin conexión.
+- **Grupo B: web pública y acceso (6/10/2026, desplegado):** `https://decargo.duckdns.org/` es la web pública (`web/public/web/`: qué es, funciones, app Android con versión/fecha/tamaño/SHA-256 leídos de `/app/decargo.json`, instalación, «Probar DECARGO» y «Acceder»). La aplicación vive en `/<DECARGO_APP_PATH>/` (en `.env`; la crea `./deca init`/`./deca up` una sola vez, estable entre reinicios; `./deca config set-app-path <ruta>|nueva`). nginx la aplica al arrancar con una plantilla (`web/templates/app.conf.template`), y el healthcheck falla si falta. La SPA calcula su base de la URL (`web/src/base.ts`); el service worker la recibe al registrarse. Rutas antiguas (`/login`, `/conductor`, `/oficina`, `/activar`, `/sin-conexion`) → 302 a la ruta nueva (favoritos, PWA instalada, app 1.0-1.2, avisos ya enviados); `/index.html`, `/app`, `/admin` y lo inventado → 404. `GET /api/v1/app/entry` (público) da la ruta y la demo (`DECARGO_DEMO_URL`, vacía = «Próximamente»). Manifiesto generado por nginx (`start_url` = ruta; `id` sin cambios). App Android 1.3.0 pide la ruta al servidor; la web pública redirige a la aplicación las apps instaladas y la app Android antigua. `scripts/publish-apk.sh` compila y publica la APK con sus metadatos. `/api/`, `/d/` (QR), PDF y huellas sin cambios (comprobado: un QR antiguo descarga el PDF con el mismo SHA-256). **Incidencia del despliegue:** la copia previa no se hizo porque `./deca backup` falló al faltar aún `DECARGO_APP_PATH`; se hizo justo después (snapshot 23) sin pérdida de datos (`verify` sin problemas, auditoría íntegra). Corregido: `deca` garantiza la ruta antes de cualquier comando.
+- **Demo pública (6/10/2026, desplegada):** `https://decargo.duckdns.org/demo/` (botón «Probar DECARGO»). Es la misma SPA compilada con `vite build --mode demo` (base `/demo/`), con un **servidor simulado en el navegador** (`web/src/demo/server.ts`) y datos totalmente ficticios; PDF del DeCA generado en el navegador (`web/src/demo/pdf.ts`, pdf-lib + qrcode, marca «DEMOSTRACIÓN · SIN VALOR»). Se entra eligiendo perfil (Administración, Oficina, Conductor); barra fija de aviso. Todo se puede crear, editar, anular y archivar; los cambios se mantienen entre pantallas y perfiles y **vuelven al estado original al recargar**. Aislamiento: no llama a la API real, no usa almacenamiento del navegador ni registra el service worker, sin manifiesto instalable, `noindex`; su código no entra en la aplicación real (comprobado en el bundle). No disponible en la demo: aviso de prueba, Firebase, DeCA externos. `DECARGO_DEMO_URL` vacío = esta demo; `off` = ocultar; o una URL https.
+- **Sigue sin hacer:** probar la app Android en un móvil real (y subir las credenciales de Firebase); envío real de Web Push (comprobar con un móvil y HTTPS); revisión visual de Conductores, Vehículos y Configuración en el navegador; `down`/`up` en el stack real; HSTS y redirección 80→443 en NPM; crear los usuarios reales y desactivar `admin.dev` (borrar `.dev-credentials`); cambiar el transportista de un DeCA ya emitido (método 1, P-13); informe final de 14 puntos.
+
+## 6. Fuera de alcance (deliberado)
+
+ERP, firma electrónica y afines, eFTI, prueba de entrega, app nativa completa (la app Android es un contenedor de la web con avisos nativos), geolocalización, OCR o extracción de campos, agrupación de envíos en la UI, segundo token público de larga duración, internacionalización, Cloudflare. (La publicación a Internet vía NPM ya la ha hecho el propietario; ver §5 ter.)
+
+## 7. Pruebas
+
+Bloque 1: prueba vertical 73/73 y restauración en entorno limpio 23/23 (informes en `informes/`; los dos primeros intentos, con errores del propio script de prueba y el hallazgo de `APP_KEY`, están en `informes/historico/`). Pendientes antes de cerrar la v1: publicación vía NPM (curl y dispositivo externo, TLS ≥1.2), iPhone y Android reales, IDOR, SSRF, y la restauración repetida con los módulos nuevos.
+
+## 8. Problemas conocidos y límites de la investigación
+
+1. RGPD, LOPDGDD, eIDAS y eFTI no se han leído en texto.
+2. Web Push en iOS dentro de la UE: dato de fuentes privadas, sin verificar.
+3. No hay criterios oficiales posteriores al 5/10/2026 sobre los casos límite.
+4. «MB» en el límite de 5 MB no definido: se usa 5 000 000 bytes.
+5. El directorio del proyecto está en un montaje remoto (`<usuario>@<IP-DEL-SERVIDOR>:/`): PostgreSQL y documentos usan volúmenes con nombre de Docker, no *bind mounts* a él.

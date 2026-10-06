@@ -1,0 +1,7 @@
+.gradle/
+build/
+app/build/
+local.properties
+# Firma de la app: NUNCA al repositorio. Guárdalos aparte (sin ellos no se pueden publicar actualizaciones de la app instalada).
+keystore/
+keystore.properties

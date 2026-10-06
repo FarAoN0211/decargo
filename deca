@@ -1,0 +1,217 @@
+#!/bin/bash
+# DECARGO · script de operación (primer bloque). Uso: ./deca <comando>
+set -euo pipefail
+cd "$(dirname "$0")"
+DC="docker compose"
+# Compose da prioridad a las variables del entorno sobre .env: una variable exportada en la shell podría
+# enmascarar el .env (p. ej. una APP_KEY antigua). Se descartan las que define .env.example.
+for v in $(grep -oE '^[A-Z_]+=' .env.example | tr -d '='); do unset "$v"; done
+
+rand_hex() { openssl rand -hex "$1"; }
+
+# Ruta interna de la aplicación (https://dominio/<ruta>/). La raíz «/» es la web pública. Se genera UNA vez y queda en .env:
+# no cambia al reiniciar. No es un secreto (el botón «Acceder» la usa); la seguridad sigue siendo el inicio de sesión.
+APP_PATH_RE='^[A-Za-z0-9_-]{16,64}$'
+ensure_app_path() {
+  local cur; cur=$(grep -E '^DECARGO_APP_PATH=' .env 2>/dev/null | head -1 | cut -d= -f2- || true)
+  if [ -z "$cur" ]; then
+    cur="a$(rand_hex 12)"
+    if grep -q '^DECARGO_APP_PATH=' .env; then sed -i "s|^DECARGO_APP_PATH=.*|DECARGO_APP_PATH=$cur|" .env; else printf '\n# Ruta interna de la aplicación (la raíz es la web pública). Cambiarla: ./deca config set-app-path\nDECARGO_APP_PATH=%s\n' "$cur" >> .env; fi
+    echo "Ruta interna de la aplicación creada: /$cur/ (queda fija en .env)."
+  elif ! [[ "$cur" =~ $APP_PATH_RE ]]; then
+    echo "DECARGO_APP_PATH en .env no es válida (16-64 letras, números, - o _)." >&2; exit 2
+  fi
+}
+# Cualquier comando de compose la necesita (docker-compose.yml la exige): se garantiza antes de todo si ya hay .env.
+[ -f .env ] && ensure_app_path >/dev/null
+
+# Par de claves VAPID (P-256) en base64url sin relleno: "publica privada". Solo necesita openssl.
+vapid_keys() {
+  local k der b64u
+  k=$(openssl ecparam -name prime256v1 -genkey -noout)
+  der=$(openssl ec -outform DER 2>/dev/null <<<"$k" | xxd -p | tr -d '\n')
+  b64u() { xxd -r -p <<<"$1" | openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+  # DER SEC1: la clave privada (32 B) empieza en el byte 7 y la pública (65 B) son los últimos 65.
+  echo "$(b64u "${der: -130}") $(b64u "${der:14:64}")"
+}
+
+# Comprobación previa de puertos del ANFITRIÓN (api, docs, web). Se niega a continuar si otro servicio ya escucha en alguno
+# (en esa dirección o en todas las interfaces) y dice quién lo usa. Los puertos que ya publican contenedores de DECARGO no cuentan.
+check_ports() {
+  [ -f .env ] || return 0
+  local bad=0 name bind port who mine
+  mine=$($DC ps --format '{{.Ports}}' 2>/dev/null)   # contenedores de ESTA instalación (sea cual sea el nombre del proyecto)
+  for name in API DOCS WEB; do
+    bind=$(grep "^${name}_BIND=" .env | cut -d= -f2-); bind=${bind:-127.0.0.1}
+    port=$(grep "^${name}_PORT=" .env | cut -d= -f2-); port=${port:-$([ $name = API ] && echo 18080 || { [ $name = DOCS ] && echo 18081 || echo 18082; })}
+    if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "^(${bind}|0\.0\.0\.0|\*|\[::\]):${port}$"; then
+      if ! grep -q "${bind}:${port}->" <<<"$mine"; then
+        who=$(docker ps --filter "publish=${port}" --format '{{.Names}}' 2>/dev/null | head -1)
+        echo "ERROR: el puerto ${port} (${name}, ${bind}) ya está en uso en esta máquina${who:+ por el contenedor «$who»}. Elige otro en .env (${name}_PORT) y vuelve a ejecutar." >&2
+        bad=1
+      fi
+    fi
+  done
+  return $bad
+}
+
+case "${1:-}" in
+  init)
+    if [ -f .env ]; then echo ".env ya existe; no se toca."; else
+      umask 077
+      read -r VAPID_PUB VAPID_PRIV <<<"$(vapid_keys)"
+      sed -e "s|^VAPID_PUBLIC_KEY=.*|VAPID_PUBLIC_KEY=${VAPID_PUB}|" \
+          -e "s|^VAPID_PRIVATE_KEY=.*|VAPID_PRIVATE_KEY=${VAPID_PRIV}|" \
+          -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(rand_hex 24)/" \
+          -e "s/^DB_API_PASSWORD=.*/DB_API_PASSWORD=$(rand_hex 24)/" \
+          -e "s/^DB_DOCS_PASSWORD=.*/DB_DOCS_PASSWORD=$(rand_hex 24)/" \
+          -e "s/^DB_BACKUP_PASSWORD=.*/DB_BACKUP_PASSWORD=$(rand_hex 24)/" \
+          -e "s/^APP_KEY=.*/APP_KEY=$(rand_hex 32)/" \
+          -e "s/^DEV_API_KEY=.*/DEV_API_KEY=$(rand_hex 24)/" \
+          -e "s/^RESTIC_PASSWORD=.*/RESTIC_PASSWORD=$(rand_hex 24)/" \
+          .env.example > .env
+      chmod 600 .env
+      echo ".env creado con secretos aleatorios (permisos 600)."
+      echo "IMPORTANTE: copia RESTIC_PASSWORD a un lugar seguro FUERA de este servidor. Sin ella no se puede abrir ningún backup."
+    fi
+    ensure_app_path
+    BK=$($DC --profile tools config --format json | python3 -c 'import sys,json; print(json.load(sys.stdin)["volumes"]["backups"]["name"])')
+    docker volume inspect "$BK" >/dev/null 2>&1 || docker volume create "$BK" >/dev/null
+    echo "volumen de backups $BK listo."
+    ;;
+  up)       ensure_app_path >/dev/null; check_ports && $DC up -d --build --wait ;;
+  ports)    check_ports && echo "Puertos libres o ya de DECARGO: api, docs y web." ;;
+  down)     $DC down ;;            # nunca -v
+  status)   $DC ps ;;
+  verify)   $DC exec -T api node dist/cli.js verify ;;
+  seed-dev)
+    # Datos de DESARROLLO: usuarios con contraseña ALEATORIA (en la base de datos solo queda su hash), vehículos y transportes con DeCA
+    # real. Las contraseñas se escriben UNA vez en .dev-credentials (permisos 600, fuera de git); no se muestran en pantalla.
+    #   ./deca seed-dev                    crea lo que falte (re-ejecutable)
+    #   ./deca seed-dev --reset-passwords  genera contraseñas nuevas para los usuarios de desarrollo
+    #   ./deca seed-dev --show             muestra el fichero
+    if [ "${2:-}" = "--show" ]; then cat .dev-credentials; exit 0; fi
+    OUT=$($DC exec -T api node dist/cli.js seed-dev ${2:+"$2"})
+    if printf '%s' "$OUT" | python3 -c 'import sys,json; sys.exit(0 if any(json.load(sys.stdin)["credentials"].values()) else 1)'; then
+      ( umask 077; printf '%s' "$OUT" | python3 deploy/seed-codes.py > .dev-credentials ); chmod 600 .dev-credentials
+      echo "Credenciales nuevas guardadas en .dev-credentials (permisos 600). Verlas: ./deca seed-dev --show"
+    else
+      echo "Los usuarios de desarrollo ya tienen contraseña: no se cambia nada. Para otras nuevas: ./deca seed-dev --reset-passwords"
+    fi
+    echo "Creado: $(printf '%s' "$OUT" | python3 -c 'import sys,json; print(", ".join(json.load(sys.stdin)["created"]) or "nada nuevo")')"
+    ;;
+  setup)
+    # Asistente de puesta en marcha / traslado a otro servidor. Detecta la IP local, pregunta la dirección pública y arranca.
+    #   ./deca setup                                      interactivo
+    #   ./deca setup --ip 192.168.1.50 --domain https://decargo.ejemplo.com --yes     sin preguntas
+    [ -f .env ] || ./deca init
+    IP=""; DOM=""; YES=0; shift
+    while [ $# -gt 0 ]; do case "$1" in --ip) IP="$2"; shift 2 ;; --domain) DOM="$2"; shift 2 ;; --yes) YES=1; shift ;; *) echo "opción desconocida: $1" >&2; exit 2 ;; esac; done
+    DETECT=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}')
+    CUR=$(grep '^PUBLIC_DOCS_BASE_URL=' .env | cut -d= -f2-)
+    if [ "$YES" = 0 ]; then
+      echo "== Configuración de DECARGO en este servidor =="
+      [ -n "$IP" ] || { read -r -p "IP local de este servidor [${DETECT:-sin detectar}]: " IP; IP="${IP:-$DETECT}"; }
+      [ -n "$DOM" ] || { read -r -p "Dirección pública https de los DeCA [${CUR}] (Intro = dejarla): " DOM; }
+    else IP="${IP:-$DETECT}"; fi
+    [ -n "$IP" ] && ./deca config set-ip "$IP" | head -1
+    [ -n "$DOM" ] && ./deca config set-domain "$DOM" | head -2
+    check_ports || exit 1
+    if [ "$YES" = 1 ]; then GO=S; else read -r -p "¿Arrancar DECARGO ahora? [S/n]: " GO; fi
+    case "${GO:-S}" in [nN]*) echo "Hecho. Arranca cuando quieras con: ./deca up" ;; *)
+      ./deca up
+      echo
+      echo "Listo. Web: http://${IP:-127.0.0.1}:$(grep '^WEB_PORT=' .env | cut -d= -f2-)"
+      echo "En el proxy (NPM): el dominio → web (puerto $(grep '^WEB_PORT=' .env | cut -d= -f2-)) y la ruta /d/ → docs (puerto $(grep '^DOCS_PORT=' .env | cut -d= -f2-)). Después, en la web: Configuración → Comprobar." ;; esac ;;
+  purge-examples)
+    # Elimina TODOS los datos de ejemplo/pruebas: transportes, DeCA y sus PDF, vehículos, DeCA externos y usuarios que no son administradores.
+    # Se conservan los administradores, los datos de la empresa, los ajustes y la auditoría (inmutable; recibe una anotación).
+    # Antes hace una copia de seguridad. Si el modo de pruebas está desactivado exige además --also-real.
+    shift; YES=0; REAL=""
+    for a in "$@"; do case "$a" in --yes) YES=1 ;; --also-real) REAL="--also-real" ;; *) echo "opción desconocida: $a" >&2; exit 2 ;; esac; done
+    if [ "$YES" = 0 ]; then
+      echo "Se van a ELIMINAR todos los transportes, DeCA (y sus PDF), vehículos y usuarios no administradores."
+      read -r -p "Escribe ELIMINAR para continuar: " C; [ "$C" = "ELIMINAR" ] || { echo "Cancelado."; exit 1; }
+    fi
+    echo "Copia de seguridad previa…"; $DC --profile tools run --rm backup backup >/dev/null || { echo "La copia de seguridad ha fallado: no se borra nada." >&2; exit 1; }
+    $DC --profile tools run --rm maint node dist/maint.js purge-examples $REAL ;;
+  config)
+    # Traslado de servidor / cambio de dominio SIN editar a mano:
+    #   ./deca config show                         dirección pública, IP local y puertos actuales
+    #   ./deca config set-domain https://dominio   dirección pública (URL de los QR y asunto de Web Push); luego ./deca up
+    #   ./deca config set-ip 192.168.1.50          IP local en la que publican api, docs y web; luego ./deca up
+    setenv() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else printf '%s=%s\n' "$1" "$2" >> .env; fi; }
+    case "${2:-show}" in
+      show) $DC exec -T api node dist/cli.js public-url 2>/dev/null | sed 's/^/Dirección vigente (la que mandan los DeCA nuevos): /' || true
+            grep -E '^(PUBLIC_DOCS_BASE_URL|ALLOW_INSECURE_PUBLIC_URL|VAPID_SUBJECT|API_BIND|DOCS_BIND|WEB_BIND|API_PORT|DOCS_PORT|WEB_PORT|DECARGO_APP_PATH|DECARGO_DEMO_URL)=' .env ;;
+      set-app-path)
+        # Cambia la ruta interna de la aplicación. Las rutas antiguas de la app (/login, /conductor…) siguen redirigiendo a la nueva,
+        # pero un favorito o un acceso directo a la ruta ANTERIOR dejará de funcionar: avisa antes a los usuarios.
+        N="${3:-}"; [ "$N" = "nueva" ] && N="a$(rand_hex 12)"
+        RESERVED='^(api|d|assets|app|web|acceder|healthz|login|oficina|conductor|activar|admin|panel|dashboard|gestion|office|decargo|sin-conexion)$'
+        { [[ "$N" =~ $APP_PATH_RE ]] && ! [[ "${N,,}" =~ $RESERVED ]]; } || { echo "Uso: ./deca config set-app-path <ruta>|nueva   (16-64 letras, números, - o _; sin palabras reconocibles)" >&2; exit 2; }
+        setenv DECARGO_APP_PATH "$N"
+        echo "Ruta interna: /$N/  Siguiente: ./deca up (la app instalada y la web la toman solas al volver a abrirse)." ;;
+      set-demo-url)
+        D="${3:-}"; { [ -z "$D" ] || [ "$D" = off ] || [[ "$D" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]]; } || { echo "Uso: ./deca config set-demo-url [https://demo.dominio/ruta | off]   (vacío = la demo incluida en /demo/; off = ocultar)" >&2; exit 2; }
+        setenv DECARGO_DEMO_URL "$D"; echo "Botón «Probar DECARGO»: ${D:-la demo incluida (/demo/)}. Siguiente: ./deca up" ;;
+      set-domain)
+        U="${3:-}"; U="${U%/}"
+        [[ "$U" =~ ^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]+)?$ ]] || { echo "Uso: ./deca config set-domain https://tu-dominio.com   (solo https, sin ruta final)" >&2; exit 2; }
+        setenv PUBLIC_DOCS_BASE_URL "$U"; setenv VAPID_SUBJECT "$U"; sed -i '/^ALLOW_INSECURE_PUBLIC_URL=/d' .env
+        # Si el servidor ya está en marcha, también se fija en la base de datos (es lo que manda; es lo mismo que Configuración en la web).
+        if $DC exec -T api true >/dev/null 2>&1; then $DC exec -T api node dist/cli.js public-url "$U" >/dev/null && echo "Guardada también en la base de datos."; fi
+        echo "Dirección pública: $U"
+        echo "Siguiente: ./deca up. Después, en el proxy (NPM): ese dominio → web (puerto WEB_PORT) y la ruta /d/ → docs (puerto DOCS_PORT)."
+        echo "Los DeCA YA emitidos llevan su dirección antigua dentro del QR del PDF: siguen funcionando mientras esa dirección apunte a este servidor."
+        echo "Los nuevos usarán la dirección nueva." ;;
+      set-ip)
+        IP="${3:-}"
+        [[ "$IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ && "$IP" != "0.0.0.0" ]] || { echo "Uso: ./deca config set-ip 192.168.1.50   (la IP local de este equipo; nunca 0.0.0.0)" >&2; exit 2; }
+        for n in API DOCS WEB; do setenv "${n}_BIND" "$IP"; done
+        echo "api, docs y web publicarán en $IP. Siguiente: ./deca up, y apuntar el proxy (NPM) a esa IP." ;;
+      *) echo "uso: ./deca config show|set-domain <https://dominio>|set-ip <ip>|set-app-path <ruta|nueva>|set-demo-url [https://…]" >&2; exit 2 ;;
+    esac ;;
+  reset-totp)  shift; $DC exec -T api node dist/cli.js reset-totp "$@" ;;   # autenticador perdido: borra el TOTP y revoca sesiones
+  create-user) shift; $DC exec -T api node dist/cli.js create-user "$@" ;;   # imprime UNA VEZ el código de activación
+  backup)   $DC --profile tools run --rm backup backup ;;
+  snapshots) $DC --profile tools run --rm backup snapshots ;;
+  restore)
+    # Para una base de datos y un almacén de documentos VACÍOS (volúmenes nuevos). Instrucciones en README.md.
+    SNAP="${2:-latest}"
+    $DC up -d --wait db
+    # Configuración guardada en el backup (sin RESTIC_PASSWORD). APP_KEY se recupera automáticamente: sin ella
+    # no se pueden volver a mostrar los QR. El resto (contraseñas de BD, puertos, URL base) se queda como en este .env.
+    ( umask 077; $DC --profile tools run --rm -T backup config "$SNAP" | tr -d '\r' > .env.from-backup )
+    BK_KEY=$(grep '^APP_KEY=' .env.from-backup | cut -d= -f2-)
+    if [ -n "$BK_KEY" ] && [ "$BK_KEY" != "$(grep '^APP_KEY=' .env | cut -d= -f2-)" ]; then
+      sed -i "s/^APP_KEY=.*/APP_KEY=$BK_KEY/" .env
+      echo "APP_KEY recuperada desde el backup y aplicada al .env actual."
+    fi
+    if [ "$(grep '^PUBLIC_DOCS_BASE_URL=' .env.from-backup)" != "$(grep '^PUBLIC_DOCS_BASE_URL=' .env)" ]; then
+      echo "AVISO: PUBLIC_DOCS_BASE_URL difiere del backup. Los PDF ya emitidos contienen su URL antigua dentro del QR."
+    fi
+    $DC run --rm migrate node dist/migrate.js ensure-roles
+    $DC --profile tools run --rm restore restore "$SNAP"
+    $DC run --rm migrate                      # no-op si el esquema está al día; reaplica permisos
+    check_ports
+    $DC up -d --build --wait
+    # Las sesiones de antes de la restauración se invalidan: el estado restaurado puede ir por detrás de lo que tienen los
+    # clientes (p. ej. refresh tokens rotados después del backup). Los dispositivos conservan su confianza: solo hay que volver a entrar.
+    $DC exec -T api node dist/cli.js revoke-all-sessions --reason restore
+    ;;
+  destroy-test-data)
+    # SOLO para la prueba de restauración. Exige confirmación explícita y que exista al menos un snapshot.
+    [ "${2:-}" = "--yes-destroy-test-data" ] || { echo "Operación destructiva. Uso: DECARGO_ALLOW_DESTROY=1 ./deca destroy-test-data --yes-destroy-test-data"; exit 2; }
+    [ "${DECARGO_ALLOW_DESTROY:-0}" = "1" ] || { echo "Falta DECARGO_ALLOW_DESTROY=1"; exit 2; }
+    N=$($DC --profile tools run --rm backup snapshots 2>/dev/null | grep -c ' decargo ' || true)
+    [ "$N" -ge 1 ] || { echo "No hay ningún snapshot de backup: no se destruye nada."; exit 3; }
+    # Los nombres de volumen salen del proyecto de compose en curso (nunca escritos a mano): así una copia de pruebas no puede tocar los de otra instalación.
+    VOLS=$($DC config --format json | python3 -c 'import sys,json; v=json.load(sys.stdin)["volumes"]; print(" ".join(v[k]["name"] for k in ("pgdata","documents")))')
+    [ -n "$VOLS" ] || { echo "No se pudieron determinar los volúmenes del proyecto: no se destruye nada."; exit 3; }
+    $DC down
+    docker volume rm $VOLS
+    echo "volúmenes de datos eliminados ($VOLS); el volumen de backups queda intacto."
+    ;;
+  *) echo "uso: ./deca init|up|down|status|verify|create-user|seed-dev|reset-totp|backup|snapshots|setup|config|purge-examples|restore [snapshot]"; exit 2 ;;
+esac

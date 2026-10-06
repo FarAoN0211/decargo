@@ -1,0 +1,19 @@
+DECARGO
+Copyright 2026 FarAoN0211 (https://github.com/FarAoN0211)
+
+Distribuido bajo la Apache License 2.0 con la condición «Commons Clause» v1.0
+(véase LICENSE): se puede usar, modificar y compartir gratis, pero no vender,
+ni el original ni versiones modificadas, ni como servicio.
+
+Este software usa componentes de terceros, cada uno con su propia licencia
+(se descargan al construir las imágenes y no forman parte de este repositorio):
+  - Node.js, Fastify, node-postgres (pg), pdf-lib, @pdf-lib/fontkit, qrcode,
+    web-push, Vue, Vue Router, Vite (MIT y licencias similares)
+  - pdf.js (pdfjs-dist), Apache License 2.0
+  - Fuentes DejaVu (dejavu-fonts.github.io), licencia libre de Bitstream Vera
+  - PostgreSQL (licencia PostgreSQL), nginx (BSD de 2 cláusulas), restic (BSD de 2 cláusulas)
+  - App Android: AndroidX y Firebase Cloud Messaging (Apache License 2.0)
+
+La carpeta fuentes/ contiene copias de normas oficiales publicadas en el BOE.
+Las disposiciones legales no son objeto de propiedad intelectual (art. 13 del
+Texto Refundido de la Ley de Propiedad Intelectual).

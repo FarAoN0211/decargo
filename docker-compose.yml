@@ -1,0 +1,220 @@
+# DECARGO · Sin publicación a Internet. `api` y `docs` publican en la dirección API_BIND / DOCS_BIND del .env:
+# 127.0.0.1 (solo este equipo) o la IP de la red local para probar desde otros dispositivos. Nunca 0.0.0.0.
+# La publicación futura (Nginx Proxy Manager, infraestructura externa) NO forma parte de este Compose.
+# AVISO: no uses `docker compose down -v`: borraría los volúmenes de datos.
+name: decargo
+
+x-server: &server
+  image: decargo-server:${DECARGO_VERSION:-dev}
+  build:
+    context: ./server
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+services:
+  db:
+    image: postgres:16.15-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-decargo}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB} && psql -U postgres -d $${POSTGRES_DB} -Atc 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks: [back]
+
+  migrate:
+    <<: *server
+    command: ["node", "dist/migrate.js"]
+    restart: "no"
+    environment:
+      DB_HOST: db
+      DB_NAME: ${POSTGRES_DB:-decargo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_API_PASSWORD: ${DB_API_PASSWORD:?}
+      DB_DOCS_PASSWORD: ${DB_DOCS_PASSWORD:?}
+      DB_BACKUP_PASSWORD: ${DB_BACKUP_PASSWORD:?}
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [back]
+
+  # Mantenimiento con el superusuario (perfil tools, solo a mano): ./deca purge-examples
+  maint:
+    <<: *server
+    profiles: [tools]
+    command: ["node", "dist/maint.js"]
+    restart: "no"
+    environment:
+      DB_HOST: db
+      DB_NAME: ${POSTGRES_DB:-decargo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DECA_TEST_MODE: ${DECA_TEST_MODE:-1}
+    volumes:
+      - documents:/data/documents
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [back]
+
+  api:
+    <<: *server
+    command: ["node", "dist/api/main.js"]
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      DB_HOST: db
+      DB_NAME: ${POSTGRES_DB:-decargo}
+      DB_USER: deca_api
+      DB_PASSWORD: ${DB_API_PASSWORD}
+      APP_KEY: ${APP_KEY:?falta APP_KEY}
+      DEV_ENDPOINTS: ${DEV_ENDPOINTS:-0}
+      DEV_API_KEY: ${DEV_API_KEY:-}
+      PUBLIC_DOCS_BASE_URL: ${PUBLIC_DOCS_BASE_URL:?}
+      ALLOW_INSECURE_PUBLIC_URL: ${ALLOW_INSECURE_PUBLIC_URL:-0}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:?falta VAPID_SUBJECT}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:?falta VAPID_PUBLIC_KEY}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:?falta VAPID_PRIVATE_KEY}
+      # Mientras sea 1 (por defecto), todo PDF lleva el rótulo «DOCUMENTO DE PRUEBA · SIN VALOR». Producción: 0.
+      DECA_TEST_MODE: ${DECA_TEST_MODE:-1}
+      # Web pública: ruta de la aplicación (para la app Android y el botón «Acceder») y del entorno de demostración.
+      DECARGO_APP_PATH: ${DECARGO_APP_PATH:-}
+      DECARGO_DEMO_URL: ${DECARGO_DEMO_URL:-}
+      # La API solo confía en X-Forwarded-For si viene de la red interna donde vive `web` (la subred de `back`).
+      TRUSTED_PROXY_CIDRS: 10.231.77.0/24
+    volumes:
+      - documents:/data/documents
+    ports:
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-18080}:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [back, front]
+
+  # Servicio documental: solo lectura (rol PostgreSQL mínimo, volumen read-only, sistema de ficheros read-only).
+  docs:
+    <<: *server
+    command: ["node", "dist/docs/main.js"]
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      DB_HOST: db
+      DB_NAME: ${POSTGRES_DB:-decargo}
+      DB_USER: deca_docs
+      DB_PASSWORD: ${DB_DOCS_PASSWORD}
+    volumes:
+      - documents:/data/documents:ro
+    ports:
+      - "${DOCS_BIND:-127.0.0.1}:${DOCS_PORT:-18081}:8081"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    # Mínimo privilegio de red: `back` (interna) para PostgreSQL y `edge` solo para recibir conexiones.
+    # `edge` no hace NAT de salida: `docs` no tiene salida general a Internet. Seguirá siendo alcanzable por el
+    # puerto publicado (hoy 127.0.0.1; con DOCS_BIND se podrá abrir a la red local para un proxy externo).
+    # Sin resolución DNS externa (el DNS interno de Docker, p. ej. `db`, sigue funcionando): evita un canal de salida por DNS.
+    dns: ["127.0.0.1"]
+    networks: [back, edge]
+
+  # Interfaz web (Vue compilado + nginx sin privilegios). Sirve la SPA y reenvía /api al backend por la red interna (mismo origen).
+  web:
+    build:
+      context: ./web
+    image: decargo-web:${DECARGO_VERSION:-dev}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      # La raíz es la web pública; la aplicación vive en /<DECARGO_APP_PATH>/. nginx la toma al arrancar (plantilla), sin reconstruir.
+      DECARGO_APP_PATH: ${DECARGO_APP_PATH:?falta DECARGO_APP_PATH (ejecuta ./deca up)}
+      NGINX_ENVSUBST_OUTPUT_DIR: /tmp/nginx-conf
+      NGINX_ENVSUBST_FILTER: ^DECARGO_
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    dns: ["127.0.0.1"]          # sin DNS externo; el DNS interno de Docker (api) sigue funcionando
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-18082}:8080"
+    healthcheck:
+      # Sana solo si sirve Y tiene configurada la ruta de la aplicación (si no, la web pública funcionaría pero DECARGO no).
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz && grep -q \"location ^~ /$$DECARGO_APP_PATH/\" /tmp/nginx-conf/app.conf"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [back, edge]      # `edge`: solo recibe conexiones, sin NAT de salida
+
+  # Herramientas puntuales (no arrancan con `up`): docker compose --profile tools run --rm backup backup
+  backup:
+    profiles: [tools]
+    build:
+      context: ./deploy/backup
+    image: decargo-backup:${DECARGO_VERSION:-dev}
+    environment:
+      DB_HOST: db
+      DB_NAME: ${POSTGRES_DB:-decargo}
+      DB_BACKUP_PASSWORD: ${DB_BACKUP_PASSWORD}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:?falta RESTIC_PASSWORD}
+      DECARGO_VERSION: ${DECARGO_VERSION:-dev}
+    volumes:
+      - documents:/data/documents:ro
+      - backups:/repo
+      - ./.env:/run/config/env:ro
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [back]
+
+  restore:
+    profiles: [tools]
+    build:
+      context: ./deploy/backup
+    image: decargo-backup:${DECARGO_VERSION:-dev}
+    environment:
+      DB_HOST: db
+      DB_NAME: ${POSTGRES_DB:-decargo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:?falta RESTIC_PASSWORD}
+    volumes:
+      - documents:/data/documents
+      - backups:/repo
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [back]
+
+networks:
+  back:
+    internal: true      # sin salida a Internet: base de datos y servicios hablan solo entre sí
+    ipam:
+      config:
+        - subnet: 10.231.77.0/24   # fija: la API confía en X-Forwarded-For solo desde esta red
+  front: {}             # solo para publicar el puerto de `api`
+  edge:                 # solo para `docs` y `web`: recibe conexiones, sin NAT de salida (sin acceso general a Internet)
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+
+volumes:
+  pgdata:
+    name: decargo_pgdata
+  documents:
+    name: decargo_documents
+  backups:
+    name: decargo_backups
+    external: true      # creado por `./deca init`; separado de los datos para que una destrucción de datos no lo borre
+

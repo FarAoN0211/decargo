@@ -1,0 +1,24 @@
+# DECARGO · generado al arrancar el contenedor a partir de DECARGO_APP_PATH (.env). No editar aquí: ./deca config set-app-path
+# La raíz «/» es la web pública; la aplicación vive en /${DECARGO_APP_PATH}/.
+
+location = /${DECARGO_APP_PATH} { return 301 /${DECARGO_APP_PATH}/; }
+location ^~ /${DECARGO_APP_PATH}/ {
+  include /etc/nginx/security-headers.conf;
+  add_header Cache-Control "no-cache" always;
+  try_files /index.html =404;            # la SPA (rutas internas: /<ruta>/login, /<ruta>/conductor…)
+}
+
+# Rutas antiguas de la aplicación (favoritos, aplicación instalada, app Android 1.0-1.2, avisos ya enviados): a la ruta nueva.
+# Así nadie se queda sin acceso tras el cambio. La seguridad sigue siendo el inicio de sesión, no la ruta.
+location ~ ^/(login|oficina|conductor|activar|sin-conexion)(/|$) {
+  include /etc/nginx/security-headers.conf;
+  return 302 /${DECARGO_APP_PATH}$request_uri;
+}
+
+# Manifiesto de la aplicación instalable: arranca en la ruta de la aplicación (la «id» no cambia: la app instalada sigue siendo la misma).
+location = /manifest.webmanifest {
+  include /etc/nginx/security-headers.conf;
+  default_type application/manifest+json;
+  add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+  return 200 '{"id":"/","name":"DECARGO","short_name":"DECARGO","description":"Gestión de documentos electrónicos de control del transporte","lang":"es","start_url":"/${DECARGO_APP_PATH}/","scope":"/","display":"standalone","orientation":"any","background_color":"#f2f6f7","theme_color":"#123d4e","icons":[{"src":"/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any"},{"src":"/icon-maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"}]}';
+}

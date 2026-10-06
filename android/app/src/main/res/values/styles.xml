@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="decargo">#123d4e</color>
+    <color name="fondo">#f2f6f7</color>
+    <style name="Theme.Decargo" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/decargo</item>
+        <item name="android:colorPrimaryDark">@color/decargo</item>
+        <item name="android:colorAccent">@color/decargo</item>
+        <item name="android:statusBarColor">@color/decargo</item>
+        <item name="android:navigationBarColor">@color/decargo</item>
+        <item name="android:windowBackground">@color/fondo</item>
+    </style>
+    <style name="Theme.Decargo.Alert" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.7</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
+    </style>
+</resources>
