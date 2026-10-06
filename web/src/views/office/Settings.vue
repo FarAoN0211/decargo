@@ -149,26 +149,38 @@ const GROUPS = [
   { g: 'Sistema', items: [{ id: 'direccion', t: 'Dirección pública' }, { id: 'android', t: 'App Android' }, { id: 'pruebas', t: 'Modo de pruebas' }, { id: 'traslado', t: 'Traslado de servidor' }] }
 ];
 const active = ref('empresa');
-let spy: IntersectionObserver | undefined;
+let mainEl: HTMLElement | null = null;
+/** El apartado «activo» es el último cuyo borde superior ya ha llegado a la parte alta de la columna de contenido (que es lo que se desplaza). */
+function pick(): void {
+  if (!mainEl) return;
+  const top = mainEl.getBoundingClientRect().top;
+  let cur = GROUPS[0].items[0].id;
+  for (const g of GROUPS) for (const i of g.items) { const el = document.getElementById(i.id); if (el && el.getBoundingClientRect().top - top <= 80) cur = i.id; }
+  active.value = cur;
+}
 function startSpy(): void {
-  spy?.disconnect();
-  spy = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) active.value = e.target.id; }, { rootMargin: '-12% 0px -75% 0px' });
-  for (const g of GROUPS) for (const i of g.items) { const el = document.getElementById(i.id); if (el) spy.observe(el); }
+  mainEl?.removeEventListener('scroll', pick);
+  mainEl = document.querySelector<HTMLElement>('.cfg-main');
+  mainEl?.addEventListener('scroll', pick, { passive: true });
+  pick();
 }
-function go(id: string): void { active.value = id; document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-watch(cfg, async (v) => { if (v) { await nextTick(); startSpy(); } }, { once: true });
-// La barra superior de la aplicación es fija y su altura varía (se parte en varias líneas en ventanas estrechas): el menú se ancla justo debajo.
-let bars: ResizeObserver | undefined;
-function measureBars(): void {
-  const h = (sel: string): number => document.querySelector(sel)?.getBoundingClientRect().height ?? 0;
-  document.documentElement.style.setProperty('--cfg-top', `${Math.round(Math.max(h('.topbar'), h('.demo-bar')))}px`);
+/** Salta directamente al apartado (sin animación: así siempre queda alineado arriba y a la vista). */
+function go(id: string): void { active.value = id; document.getElementById(id)?.scrollIntoView({ block: 'start' }); }
+// El panel mide lo que queda de ventana bajo el título y las barras: así el título y el menú no se mueven nunca y solo se desplaza el contenido.
+let fitObs: ResizeObserver | undefined;
+function fit(): void {
+  const el = document.querySelector<HTMLElement>('.cfg');
+  if (!el) return;
+  const top = el.getBoundingClientRect().top + window.scrollY;
+  document.documentElement.style.setProperty('--cfg-h', `${Math.max(320, Math.floor(window.innerHeight - top - 14))}px`);
 }
+watch(cfg, async (v) => { if (v) { await nextTick(); fit(); startSpy(); } }, { once: true });
 onMounted(() => {
-  measureBars();
-  bars = new ResizeObserver(measureBars);
-  for (const el of document.querySelectorAll('.topbar, .demo-bar')) bars.observe(el);
+  window.addEventListener('resize', fit);
+  fitObs = new ResizeObserver(fit);
+  for (const el of document.querySelectorAll('.topbar, .demo-bar, .page-title')) fitObs.observe(el);
 });
-onBeforeUnmount(() => { spy?.disconnect(); bars?.disconnect(); document.documentElement.style.removeProperty('--cfg-top'); });
+onBeforeUnmount(() => { mainEl?.removeEventListener('scroll', pick); fitObs?.disconnect(); window.removeEventListener('resize', fit); document.documentElement.style.removeProperty('--cfg-h'); });
 </script>
 <template>
   <div class="page-title"><h1>Configuración</h1></div>
