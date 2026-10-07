@@ -2,16 +2,20 @@
 export interface Addr { address?: string | null; postal_code?: string | null; city?: string | null; province?: string | null; country?: string | null }
 
 const SPAIN = /^(es|esp|españa|espana|spain)$/i;
+const fold = (x: string): string => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
 /** «Calle Mayor 5, 18004 Granada (Granada), Portugal»: solo se añade el país si no es España. */
 export function fullAddress(a: Addr): string {
+  // «Camino X, 68 (GRANADA)» con localidad Granada: no se repite la localidad entre paréntesis.
+  const paren = a.address && a.city ? /^(.*?)\s*\(([^)]+)\)\s*$/.exec(a.address.trim()) : null;
+  const street = paren && fold(paren[2]) === fold(a.city ?? '') && paren[1].trim() ? paren[1].trim() : a.address;
+  a = { ...a, address: street };
   const cpCity = [a.postal_code, a.city].filter(Boolean).join(' ');
   const prov = a.province && a.province.trim().toLowerCase() !== (a.city ?? '').trim().toLowerCase() ? ` (${a.province})` : '';
   const country = a.country && !SPAIN.test(a.country.trim()) ? a.country : '';
   return [a.address, `${cpCity}${prov}`.trim(), country].filter((x) => x && String(x).trim()).join(', ');
 }
 
-const fold = (x: string): string => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
 /** Localidad deducida con prudencia de una dirección en una línea: «Camino X, 68 (GRANADA)» → GRANADA, «Calle Y, 28042 Madrid» → Madrid. '' si no hay. */
 export function cityFromAddress(address: string | null | undefined): string {

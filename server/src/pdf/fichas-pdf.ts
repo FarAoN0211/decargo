@@ -44,11 +44,19 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Uint8Array> {
   const stopsO = d.originStops ?? [{ party: null, address: d.origin, time: null, pallets: null, refs: [], seals: [] }];
   const stopsD = d.destinationStops ?? (d.consignees?.length ? d.consignees.map((c) => ({ party: c.name, address: c.address, time: null, pallets: null, refs: [], seals: [] })) : [{ party: null, address: d.destination, time: null, pallets: null, refs: [], seals: [] }]);
   const date = d.transportDate ? esDate(d.transportDate) : '';
-  /** Un campo por lugar: «Lugar de carga 2 · 09:30» → empresa, dirección y (palets · referencias · precintos). */
+  /** Un campo por lugar: «Lugar de carga 2 · hora 09:30» → empresa, dirección y, cada uno en su línea, palets, referencias y precintos.
+   *  Con un solo lugar los palets no se repiten aquí: ya constan en «Mercancía» (en la entrega solo si no coinciden con lo cargado). */
   const stopFields = (s: (typeof stopsO)[number], n: number, total: number, kind: 'carga' | 'descarga'): Field[] => {
-    const extra = [s.pallets != null ? pal(s.pallets) : '', s.refs?.length ? `${s.refs.length > 1 ? 'Referencias' : 'Ref.'}: ${s.refs.join(', ')}` : '', s.seals?.length ? `${s.seals.length > 1 ? 'Precintos' : 'Precinto'}: ${s.seals.join(', ')}` : ''].filter(Boolean).join(' · ');
+    const loaded = d.palletsTotal ?? d.units ?? null;
+    const showPallets = s.pallets != null && (total > 1 || (kind === 'descarga' && loaded !== null && s.pallets !== loaded));
+    const lines = [
+      s.party ?? '', s.address,
+      ...(showPallets ? [`Palets: ${s.pallets}`] : []),
+      ...(s.refs?.length ? [`${s.refs.length > 1 ? 'Referencias' : 'Referencia'}: ${s.refs.join(', ')}`] : []),
+      ...(s.seals?.length ? [`${s.seals.length > 1 ? 'Precintos' : 'Precinto'}: ${s.seals.join(', ')}`] : [])
+    ].filter(Boolean);
     const label = `${kind === 'carga' ? 'Lugar de carga' : 'Lugar de entrega'}${total > 1 ? ` ${n}` : ''}${s.time ? ` · hora ${s.time}` : ''}`;
-    return [[label, [s.party ?? '', [s.address, extra].filter(Boolean).join(' · ')].filter(Boolean).join('\n')]];   // dos líneas por lugar
+    return [[label, lines.join('\n')]];
   };
   const totalLine = (l: typeof stopsO, label: string): Field[] => {
     const withP = l.filter((s) => s.pallets != null);
@@ -188,6 +196,12 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Uint8Array> {
         { w, title: 'Entrega', cols: [[...stopsD.flatMap((s, n) => stopFields(s, n + 1, stopsD.length, 'descarga')), ...totalLine(stopsD, 'Total entregado')]] }
       ]);
     },
+    (c) => sectionTitle(c, 'd) Mercancía'),
+    (c) => {
+      const cols: Field[][] = [[], [], []];
+      goods.forEach((f, k) => cols[k % 3].push(f));
+      return row(c, [{ w: W, title: '', cols }]);
+    },
     (c) => sectionTitle(c, 'g) Vehículo y conductor'),
     (c) => row(c, [{ w: W, title: '', cols: [
       [['Tipo de conjunto', d.tractorPlate ? conjunto : ''], ['Conductor', person(d.driver)]],
@@ -195,12 +209,6 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Uint8Array> {
       [[`Matrícula ${d.trailerKind ? (KIND[d.trailerKind] ?? d.trailerKind).toLowerCase() : 'remolque o semirremolque'}`, d.trailerPlate ?? ''],
         ['Cambios de vehículo durante el transporte', (d.vehicleChanges ?? []).map((v) => `${when(v.at)} · ${v.tractorPlate}${v.trailerPlate ? ` / ${v.trailerPlate}` : ''}`).join('\n')]]
     ] }]),
-    (c) => sectionTitle(c, 'd) Mercancía'),
-    (c) => {
-      const cols: Field[][] = [[], [], []];
-      goods.forEach((f, k) => cols[k % 3].push(f));
-      return row(c, [{ w: W, title: '', cols }]);
-    },
     (c) => sectionTitle(c, d.aecRef ? 'e) Autorización especial · h) Observaciones' : 'h) Observaciones'),
     (c) => row(c, [{ w: W, title: '', cols: [[['Observaciones, reservas y otras indicaciones', remarks || (i.blank ? '' : 'Sin observaciones.')]]] }])
   ];
