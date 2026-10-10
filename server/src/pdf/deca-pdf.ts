@@ -39,7 +39,8 @@ export interface DecaData {
   destinationStops?: Array<{ party: string | null; address: string; time: string | null; pallets: number | null; refs: string[]; seals: string[] }>;
   isTest?: boolean;                                              // el DeCA se emitió en modo de pruebas (las versiones posteriores lo conservan)
   driver2?: { name: string; nif: string | null; phone: string | null } | null;   // casilla 9.1: conductor efectivo sucesivo
-  vehicleChanges?: Array<{ at: string; tractorPlate: string; trailerPlate: string | null }>;
+  vehicleChanges?: Array<{ at: string; tractorPlate: string; trailerPlate: string | null; reason?: string | null }>;
+  driverChanges?: Array<{ at: string; driver: { name: string; nif: string | null; phone: string | null } }>;   // cambios de conductor, en orden (el original sigue en `driver`)
   logoSha256?: string | null;                                    // logo de la empresa con el que se emitió (las versiones lo conservan)   // casilla 8.1: cambios de vehículo (el original queda en la casilla 8)
 }
 

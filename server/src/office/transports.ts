@@ -306,9 +306,10 @@ export async function syncDriverIntoDeca(pool: Pool, storage: LocalStorage, acto
     if (!info) { await c.query('ROLLBACK'); return null; }
     const snap = deca.snapshot;
     let next: DecaData, reason: string, changes: string[];
+    const current = snap.driverChanges?.at(-1)?.driver ?? snap.driver2 ?? snap.driver;
     if (!snap.driver) { next = { ...snap, driver: info }; reason = 'Se asigna el conductor'; changes = ['driver']; }
-    else if (snap.driver.name === info.name || snap.driver2?.name === info.name) { await c.query('ROLLBACK'); return null; }
-    else { next = { ...snap, driver2: info }; reason = 'Cambio de conductor'; changes = ['driver2']; }
+    else if (current?.name === info.name) { await c.query('ROLLBACK'); return null; }
+    else { next = { ...snap, driver2: info, driverChanges: [...(snap.driverChanges ?? []), { at: new Date().toISOString(), driver: info }] }; reason = 'Cambio de conductor'; changes = ['driver2', 'driverChanges']; }
     const r = await addDecaVersion(c, storage, { decaId: deca.id, data: next, actor: actorStr(actor), reason, changes });
     await c.query('COMMIT');
     return { version: r.version };
@@ -317,7 +318,7 @@ export async function syncDriverIntoDeca(pool: Pool, storage: LocalStorage, acto
 
 /**
  * Cambio de vehículo con el DeCA ya emitido (ORD art. 6.g): el transporte pasa al vehículo nuevo y el DeCA recibe una versión nueva (mismo QR y URL)
- * que conserva la matrícula original en la casilla 8 y anota el cambio, con su fecha, en la 8.1. Sin DeCA, simplemente se cambia la asignación.
+ * que conserva la matrícula original y anota el cambio (fecha, hora y motivo) en Observaciones. Sin DeCA, simplemente se cambia la asignación.
  */
 export async function changeVehicle(pool: Pool, storage: LocalStorage, actor: Actor, transportId: string, rawTractor: unknown, rawTrailer: unknown, rawReason: unknown) {
   if (!UUID_RE.test(transportId)) throw new ApiError(404, 'no_encontrado');
@@ -340,7 +341,7 @@ export async function changeVehicle(pool: Pool, storage: LocalStorage, actor: Ac
     let version: number | null = null;
     const deca = await activeDeca(c, transportId);
     if (deca) {
-      const change = { at: new Date().toISOString(), tractorPlate: veh.tractor!.plate, trailerPlate: veh.trailer?.plate ?? null };
+      const change = { at: new Date().toISOString(), tractorPlate: veh.tractor!.plate, trailerPlate: veh.trailer?.plate ?? null, reason };
       const r = await addDecaVersion(c, storage, { decaId: deca.id, data: { ...deca.snapshot, vehicleChanges: [...(deca.snapshot.vehicleChanges ?? []), change] }, actor: actorStr(actor), reason, changes: ['vehicleChanges'] });
       version = r.version;
     }

@@ -1424,7 +1424,7 @@ async function run() {
   check((await asg(nd.json.id, dA.id)).status === 204 && (await det22(nd.json.id)).deca.version === 2, 'volver a asignar al mismo conductor no crea otra versión');
   check((await asg(nd.json.id, dB.id)).status === 204, 'se cambia de conductor');
   const nd3Pdf = await verPdf(nd.json.deca_id, 3);
-  check((await det22(nd.json.id)).deca.version === 3 && /Conductor sucesivo \(relevo\) Prueba webB/.test(nd3Pdf) && /DNI\/NIE: 12345678Z/.test(nd3Pdf), 'al cambiar de conductor, el nuevo va como conductor sucesivo y el primero se conserva');
+  check((await det22(nd.json.id)).deca.version === 3 && /sustituido por Prueba webB/.test(nd3Pdf) && /DNI\/NIE: 12345678Z/.test(nd3Pdf), 'al cambiar de conductor, el cambio consta en Observaciones (nuevo en negrita, anterior en rojo) y el primero se conserva');
   check(Number(psql(`SELECT count(*) FROM audit_log WHERE action='DECA_VERSION_ADDED' AND entity_id='${nd.json.deca_id}'`)) === 2, 'cada nueva versión queda en la auditoría');
   await TPL(AD2, { show_driver: false });
   const nd0 = await call('POST', '/api/v1/transports', { token: O, body: base22({ cargo: `Sin datos del conductor ${sfx}` }) });
@@ -1445,7 +1445,7 @@ async function run() {
   const vcR = await VC(O, vc.json.id, { tractor_id: vN.json.id, trailer_id: vNr.json.id, reason: 'Avería' });
   const vc2 = await det22(vc.json.id), vc2Pdf = await verPdf(vc.json.deca_id, 2);
   check(vcR.status === 200 && vcR.json.deca_version === 2 && vc2.vehicles.tractor.plate === `W${SFX}8` && vc2.deca.version === 2 && vc2.deca.technical.public_url === vc1.deca.technical.public_url, 'cambio de vehículo: el transporte pasa al vehículo nuevo y el DeCA recibe una versión 2 con el mismo enlace');
-  check(vc2Pdf.includes(pT) && vc2Pdf.includes(`W${SFX}8`) && /Cambios de vehículo durante el transporte/.test(vc2Pdf) && !(await verPdf(vc.json.deca_id, 1)).includes(`W${SFX}8`), 'la versión 2 conserva la matrícula original y anota la nueva en «Cambios de vehículo»; la versión 1 no cambia');
+  check(vc2Pdf.includes(pT) && vc2Pdf.includes(`W${SFX}8`) && /Cambio de matrícula/.test(vc2Pdf) && /sustituido por/.test(vc2Pdf) && !(await verPdf(vc.json.deca_id, 1)).includes(`W${SFX}8`), 'la versión 2 conserva la matrícula original y anota el cambio en Observaciones; la versión 1 no cambia');
   check((await http('GET', `/api/v1/driver/transports/${vc.json.id}`, { token: dA22 })).json.vehicles.tractor === `W${SFX}8`, 'el conductor ve el vehículo nuevo en su transporte');
   const vcB = await VC(O, vc.json.id, { tractor_id: vT.json.id, trailer_id: vR.json.id });
   const vc3Pdf = await verPdf(vc.json.deca_id, 3);
@@ -1579,7 +1579,7 @@ async function run() {
   const bigPdf = (await call('GET', `/api/v1/decas/${big.json.deca_id}/versions/1/pdf`, { token: O })).buf;
   check(big.status === 201 && pages(bigPdf) <= 2 && decodeQr(bigPdf, 'grande.pdf') === (await call('GET', `/api/v1/transports/${big.json.id}`, { token: O })).json.deca.technical.public_url && /Total cargado 55 palets/.test(pdfRaw(bigPdf)) && /Empresa 29 de prueba/.test(pdfRaw(bigPdf)), 'con 10 lugares de carga y 10 de entrega (peor caso, cada dato en su línea) no pasa de dos páginas, no se pierde ninguno y el QR se lee');
   const vc25 = await http('POST', `/api/v1/transports/${f1.json.id}/assign-driver`, { token: O, body: { driver_id: dB.id } });
-  check(vc25.status === 204 && (await call('GET', `/api/v1/transports/${f1.json.id}`, { token: O })).json.deca.version === 2 && /Conductor sucesivo \(relevo\) Prueba webB/.test(pdfRaw((await call('GET', `/api/v1/decas/${f1.json.deca_id}/versions/2/pdf`, { token: O })).buf)), 'al cambiar de conductor, el Modelo DECARGO recibe una versión nueva con el conductor sucesivo (mismo enlace)');
+  check(vc25.status === 204 && (await call('GET', `/api/v1/transports/${f1.json.id}`, { token: O })).json.deca.version === 2 && /sustituido por Prueba webB/.test(pdfRaw((await call('GET', `/api/v1/decas/${f1.json.deca_id}/versions/2/pdf`, { token: O })).buf)), 'al cambiar de conductor, el Modelo DECARGO recibe una versión nueva con el cambio de conductor (mismo enlace)');
   // otro transportista con su autorización (y la agenda la aprende)
   const oc = await call('POST', '/api/v1/transports', { token: O, body: fb({ cargo: `Otro transportista ${sfx}`, driver_id: undefined, carrier_name: `Transportes Otros ${sfx} S.L.`, carrier_nif: 'B12345674', carrier_authorization: '99887766' }) });
   check(oc.status === 201 && /Nº de autorización de transporte 99887766/.test(pdfRaw((await call('GET', `/api/v1/decas/${oc.json.deca_id}/versions/1/pdf`, { token: O })).buf)) && psql(`SELECT transport_authorization FROM party WHERE nif = 'B12345674'`) === '99887766', 'otro transportista con su nº de autorización: se imprime y la agenda lo guarda');

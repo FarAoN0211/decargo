@@ -19,7 +19,9 @@ const money = (v: string | null | undefined): string => (v ? `${Number(v).toLoca
 const kg = (v: string): string => `${Number(v).toLocaleString('es-ES', { maximumFractionDigits: 2 })} kg`;
 const pal = (n: number): string => `${n} ${n === 1 ? 'palet' : 'palets'}`;
 
-type Field = [label: string, value: string];
+/** st por línea lógica (las separadas por «\n»): 'b' = vigente, en negrita; 'old' = dato anterior, en rojo, sin negrita y un punto más pequeño. */
+type Style = 'b' | 'old' | undefined;
+type Field = [label: string, value: string, styles?: Style[]];
 interface Fonts { regular: PDFFont; bold: PDFFont }
 
 export async function generateFichasPdf(i: DecaPdfInput): Promise<Uint8Array> {
@@ -77,6 +79,41 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Uint8Array> {
     ...(d.temperature ? [['Temperatura', temperatureLine(d.temperature).replace('Temperatura de transporte: ', '')] as Field] : []),
     ...(d.adr ? [['Mercancía peligrosa (ADR)', d.adr.detail ? `Sí · ${d.adr.detail}` : 'Sí'] as Field] : [])
   ];
+  // ---- Trazabilidad de los cambios de vehículo y de conductor: lo vigente en negrita, lo anterior en rojo (nunca se borra nada).
+  type Person = NonNullable<typeof d.driver>;
+  const plates = (tr: string | null | undefined, tl: string | null | undefined): string => [tr, tl].filter(Boolean).join(' / ');
+  const personLine = (p: Person): string => [p.name, p.nif ? `DNI/NIE: ${p.nif}` : '', p.phone ? `Tel.: ${p.phone}` : ''].filter(Boolean).join(' · ');
+  const vChanges = d.vehicleChanges ?? [];
+  const dChanges: Array<{ at: string | null; driver: Person }> = d.driverChanges ?? (d.driver2 ? [{ at: null, driver: d.driver2 }] : []);   // DeCA antiguos: solo constaba el conductor sucesivo
+  const curTractor = vChanges.at(-1)?.tractorPlate ?? d.tractorPlate, curTrailer = vChanges.length ? vChanges.at(-1)!.trailerPlate : (d.trailerPlate ?? null);
+  const curDriver: Person | null = dChanges.at(-1)?.driver ?? d.driver ?? null;
+  /** Matrículas o conductores que ya no son los vigentes, sin repetir. */
+  const uniq = <T,>(l: T[], key: (x: T) => string): T[] => l.filter((x, k) => key(x) && l.findIndex((y) => key(y) === key(x)) === k);
+  const prevTractors = uniq([d.tractorPlate, ...vChanges.map((v) => v.tractorPlate)], (x) => x).filter((x) => x !== curTractor);
+  const prevTrailers = uniq([d.trailerPlate ?? '', ...vChanges.map((v) => v.trailerPlate ?? '')], (x) => x).filter((x) => x !== (curTrailer ?? ''));
+  const prevDrivers = uniq([...(d.driver ? [d.driver] : []), ...dChanges.map((k) => k.driver)], (p) => p.name).filter((p) => p.name !== curDriver?.name);
+  /** Campo con el dato vigente en negrita y debajo, en rojo, los anteriores. */
+  const withPrev = (cur: string, prev: string[], label = 'Anterior'): { v: string; st: Style[] } => ({
+    v: [cur, ...prev.map((x) => `${label}: ${x}`)].filter(Boolean).join('\n'), st: [...(cur ? ['b' as Style] : []), ...prev.map((): Style => 'old')] });
+  /** Observaciones: solo qué vehículo (o conductor) sustituye a cuál y el motivo; los datos completos ya constan en «Vehículo y conductor». */
+  const trace = ((): { v: string; st: Style[] } | null => {
+    type Ev = { at: string | null; text: string };
+    const evs: Ev[] = [];
+    let tr = d.tractorPlate, tl = d.trailerPlate ?? null;
+    for (const v of vChanges) {
+      const reason = v.reason && v.reason !== 'Cambio de vehículo' ? ` Motivo: ${v.reason}` : '';
+      evs.push({ at: v.at, text: `Cambio de matrícula (${when(v.at)}): ${plates(tr, tl)} sustituido por ${plates(v.tractorPlate, v.trailerPlate)}.${reason}` });
+      tr = v.tractorPlate; tl = v.trailerPlate;
+    }
+    let dr: Person | null = d.driver ?? null;
+    for (const k of dChanges) {
+      if (dr) evs.push({ at: k.at, text: `Cambio de conductor${k.at ? ` (${when(k.at)})` : ''}: ${dr.name} sustituido por ${k.driver.name}.` });
+      dr = k.driver;
+    }
+    if (!evs.length) return null;
+    evs.sort((x, y) => (x.at ?? '9').localeCompare(y.at ?? '9'));
+    return { v: evs.map((e) => e.text).join('\n'), st: evs.map((): Style => undefined) };
+  })();
   const remarks = [d.remarks ?? '', d.aecRef ? `Autorización especial de circulación: ${d.aecRef}` : ''].filter(Boolean).join('\n');
 
   // ---------------------------------------------------------------- maquetación (dos pasadas: medir y dibujar)
@@ -85,14 +122,25 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Uint8Array> {
   const lh = (s: number): number => s * 1.28;
   const labelH = (s: number): number => (s - 1.3) * 1.25;
   /** Altura de un campo (etiqueta + valor) en una columna de ancho w. */
-  const fieldH = (f: Field, w: number, s: number): number => (f[1].trim() ? labelH(s) + wrap(f[1], F.regular, s, w).length * lh(s) + 3 : 0);
+  const OLD = 1.2;   // los datos anteriores van un punto y pico más pequeños
+  const sizeOf = (st: Style, s: number): number => (st === 'old' ? s - OLD : s);
+  const fontOf = (st: Style): PDFFont => (st === 'b' ? F.bold : F.regular);
+  /** Líneas de un campo ya ajustadas al ancho, con su estilo. */
+  const fieldLines = (f: Field, w: number, s: number): Array<{ t: string; st: Style }> =>
+    f[1].split('\n').flatMap((para, k) => wrap(para, fontOf(f[2]?.[k]), sizeOf(f[2]?.[k], s), w).map((t) => ({ t, st: f[2]?.[k] })));
+  const fieldH = (f: Field, w: number, s: number): number => (f[1].trim() ? labelH(s) + fieldLines(f, w, s).reduce((a, l) => a + lh(sizeOf(l.st, s)), 0) + 3 : 0);
   const colH = (fields: Field[], w: number, s: number): number => fields.reduce((a, f) => a + fieldH(f, w, s), 0);
   const drawFields = (c: Ctx, fields: Field[], x: number, y: number, w: number): void => {
-    for (const [label, value] of fields) {
+    for (const f of fields) {
+      const [label, value] = f;
       if (!value.trim() || !c.page) continue;
       c.page.drawText(label, { x, y: y - (c.s - 1.3), size: c.s - 1.3, font: F.bold, color: ACCENT });
       y -= labelH(c.s);
-      for (const l of wrap(value, F.regular, c.s, w)) { c.page.drawText(l, { x, y: y - c.s, size: c.s, font: F.regular, color: BLACK }); y -= lh(c.s); }
+      for (const l of fieldLines(f, w, c.s)) {
+        const sz = sizeOf(l.st, c.s);
+        c.page.drawText(l.t, { x, y: y - sz, size: sz, font: fontOf(l.st), color: l.st === 'old' ? RED : BLACK });
+        y -= lh(sz);
+      }
       y -= 3;
     }
   };
@@ -203,14 +251,25 @@ export async function generateFichasPdf(i: DecaPdfInput): Promise<Uint8Array> {
       return row(c, [{ w: W, title: '', cols }]);
     },
     (c) => sectionTitle(c, 'g) Vehículo y conductor'),
-    (c) => row(c, [{ w: W, title: '', cols: [
-      [['Tipo de conjunto', d.tractorPlate ? conjunto : ''], ['Conductor', person(d.driver)]],
-      [[`Matrícula ${d.tractorKind ? (KIND[d.tractorKind] ?? d.tractorKind).toLowerCase() : 'vehículo'}`, d.tractorPlate], ['Conductor sucesivo (relevo)', person(d.driver2)]],
-      [[`Matrícula ${d.trailerKind ? (KIND[d.trailerKind] ?? d.trailerKind).toLowerCase() : 'remolque o semirremolque'}`, d.trailerPlate ?? ''],
-        ['Cambios de vehículo durante el transporte', (d.vehicleChanges ?? []).map((v) => `${when(v.at)} · ${v.tractorPlate}${v.trailerPlate ? ` / ${v.trailerPlate}` : ''}`).join('\n')]]
-    ] }]),
+    (c) => {
+      const t1 = withPrev(curTractor, prevTractors), t2 = withPrev(curTrailer ?? '', prevTrailers);
+      // Conductor vigente: una línea por dato, en negrita. Los anteriores, igual, en rojo.
+      const cur = curDriver ? person(curDriver).split('\n') : [];
+      const prev = prevDrivers.flatMap((p) => person(p).split('\n').map((l, k) => (k === 0 ? `Anterior: ${l}` : l)));
+      const dv = { v: [...cur, ...prev].join('\n'), st: [...cur.map((): Style => 'b'), ...prev.map((): Style => 'old')] };
+      return row(c, [{ w: W, title: '', cols: [
+        [['Tipo de conjunto', d.tractorPlate ? conjunto : ''], ['Conductor', dv.v, dv.st]],
+        [[`Matrícula ${d.tractorKind ? (KIND[d.tractorKind] ?? d.tractorKind).toLowerCase() : 'vehículo'}`, t1.v, t1.st]],
+        [[`Matrícula ${d.trailerKind ? (KIND[d.trailerKind] ?? d.trailerKind).toLowerCase() : 'remolque o semirremolque'}`, t2.v, t2.st]]
+      ] }]);
+    },
     (c) => sectionTitle(c, d.aecRef ? 'e) Autorización especial · h) Observaciones' : 'h) Observaciones'),
-    (c) => row(c, [{ w: W, title: '', cols: [[['Observaciones, reservas y otras indicaciones', remarks || (i.blank ? '' : 'Sin observaciones.')]]] }])
+    (c) => {
+      // Primero lo escrito por la oficina; después, la trazabilidad de los cambios.
+      const base = remarks || (trace || i.blank ? '' : 'Sin observaciones.');
+      const v = [base, trace?.v ?? ''].filter(Boolean).join('\n'), st: Style[] = [...(base ? base.split('\n').map((): Style => undefined) : []), ...(trace?.st ?? [])];
+      return row(c, [{ w: W, title: '', cols: [[['Observaciones, reservas y otras indicaciones', v, st]]] }]);
+    }
   ];
 
   const TITLES = new Set([1, 3, 5, 7, 9]);   // índices de los bloques que son títulos de sección

@@ -58,7 +58,7 @@ async function cancelTransport(): Promise<void> {
   await run('cancel', () => api(`/transports/${props.id}/cancel`, { method: 'POST', body: { reason: cancelReason.value } }), 'Transporte anulado. Se conserva el registro y el DeCA.');
   cancelOpen.value = false; cancelReason.value = '';
 }
-// Cambio de vehículo con el DeCA ya emitido: nueva versión del DeCA (mismo QR) que anota el cambio en la casilla 8.1
+// Cambio de vehículo con el DeCA ya emitido: nueva versión del DeCA (mismo QR) que anota el cambio en Observaciones
 const chgOpen = ref(false), chg = ref({ tractor: '', trailer: '', reason: '' });
 function openChange(): void { chg.value = { tractor: t.value.vehicles?.tractor.id ?? '', trailer: t.value.vehicles?.trailer?.id ?? '', reason: '' }; chgOpen.value = true; }
 const chgTrailers = computed(() => { const main = vehicles.value.find((v) => v.id === chg.value.tractor); return main ? vehicles.value.filter((v) => v.kind === (main.kind === 'RIGIDO' ? 'REMOLQUE' : 'SEMIRREMOLQUE')) : []; });
@@ -149,7 +149,7 @@ onMounted(load);
           <h3>Vehículos</h3>
           <template v-if="t.deca || !canWrite">
             <p>{{ t.vehicles ? `${t.vehicles.tractor.plate} (${KIND[t.vehicles.tractor.kind]})` : 'Sin asignar' }}<template v-if="t.vehicles?.trailer"> + {{ t.vehicles.trailer.plate }} ({{ KIND[t.vehicles.trailer.kind] }})</template></p>
-            <p v-if="t.deca" class="muted small">El DeCA ya está emitido con estas matrículas. Si hay que cambiar de vehículo, el DeCA recibe una versión nueva (mismo QR y URL) que conserva la matrícula original en la casilla 8 y anota el cambio, con su fecha, en la 8.1.</p>
+            <p v-if="t.deca" class="muted small">El DeCA ya está emitido con estas matrículas. Si hay que cambiar de vehículo, el DeCA recibe una versión nueva (mismo QR y URL) que conserva la matrícula anterior (en rojo) y anota el cambio, con fecha, hora y motivo, en Observaciones.</p>
             <button v-if="t.deca && canWrite && isOpen" class="btn btn-sm btn-primary" type="button" @click="openChange">Cambiar vehículo</button>
           </template>
           <template v-else>
@@ -231,7 +231,7 @@ onMounted(load);
   </Modal>
   <Modal v-if="chgOpen" title="Cambiar vehículo" @close="chgOpen = false">
     <form class="stack" @submit.prevent="changeVehicle">
-      <p class="muted small">Se genera una versión nueva del DeCA con el mismo QR. La matrícula original queda en la casilla 8 y el cambio se anota en la 8.1.</p>
+      <p class="muted small">Se genera una versión nueva del DeCA con el mismo QR. La matrícula nueva sale en negrita, la anterior se conserva en rojo y el cambio (fecha, hora y motivo) se anota en Observaciones.</p>
       <label>Vehículo nuevo (tractora o rígido)<select v-model="chg.tractor" @change="chg.trailer = ''"><option value="" disabled>Elige</option><option v-for="v in mains" :key="v.id" :value="v.id">{{ v.plate }} · {{ KIND[v.kind] }}</option></select></label>
       <label>Remolque / semirremolque<select v-model="chg.trailer" :disabled="!chg.tractor"><option value="">Ninguno</option><option v-for="v in chgTrailers" :key="v.id" :value="v.id">{{ v.plate }} · {{ KIND[v.kind] }}</option></select></label>
       <label>Motivo (opcional)<input v-model="chg.reason" maxlength="200" placeholder="Avería, cambio de unidad…" /></label>

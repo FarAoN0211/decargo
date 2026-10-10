@@ -114,7 +114,7 @@ function seedTransport(o: Row): Row {
 }
 function issue(t: Row): void {
   const now = new Date().toISOString();
-  // Como en la aplicación real: siempre el Modelo DECARGO; el DeCA guarda el logo y los vehículos con los que se emitió (los cambios van en la 8.1).
+  // Como en la aplicación real: siempre el Modelo DECARGO; el DeCA guarda el logo y los vehículos con los que se emitió (los cambios van en Observaciones).
   t.deca = { id: uid(), version: 1, status: 'ACTIVE', created_at: now, modified_at: now, public_url: `${PUBLIC}d/${fake(24)}`, template: 'DECARGO', logo: demoLogo, tractor_id: t.tractor_id, trailer_id: t.trailer_id, versions: [{ version_no: 1, method: 'ORIGINAL', created_at: now, sha256: fake(64), size_bytes: 30000 + Math.floor(Math.random() * 5000) }] };
 }
 function newVersion(t: Row, reason: string): void {
@@ -235,7 +235,7 @@ async function pdfOf(t: Row, opts: { template?: string; banner?: string; logo?: 
     }, { tractor: { plate: tr.plate, kind: tr.kind }, trailer: tl ? { plate: tl.plate, kind: tl.kind } : null },
     { companyAddress: fullAddress(company), companyAuthorization: company.transport_authorization ?? null, driver: withDriver ? person(ids[0]) : null }),
     driver2: withDriver && ids.length > 1 ? person(ids[ids.length - 1]) : null,
-    vehicleChanges: t.vehicle_changes.map((c: Row) => ({ at: c.at, tractorPlate: c.tractor, trailerPlate: c.trailer ?? null })),
+    vehicleChanges: t.vehicle_changes.map((c: Row) => ({ at: c.at, tractorPlate: c.tractor, trailerPlate: c.trailer ?? null, reason: c.reason ?? null })),
     template: tpl as DecaData['template'], isTest: false
   };
   const gen = tpl === 'CARTA_DE_PORTE' ? generateCartaPdf : tpl === 'DECARGO' ? generateFichasPdf : generateDecaPdf;
@@ -401,7 +401,7 @@ async function route(method: string, path: string, q: URLSearchParams, b: Row): 
     const tr = req(b.tractor_id, 'tractor_id'), tl = opt(b.trailer_id);
     if (tr === t.tractor_id && tl === t.trailer_id) throw new DemoError(409, 'sin_cambios');
     t.tractor_id = tr; t.trailer_id = tl;
-    if (t.deca) { t.vehicle_changes.push({ at: new Date().toISOString(), tractor: vehById(tr)?.plate, trailer: vehById(tl)?.plate ?? null }); newVersion(t, 'Cambio de vehículo'); }
+    if (t.deca) { t.vehicle_changes.push({ at: new Date().toISOString(), tractor: vehById(tr)?.plate, trailer: vehById(tl)?.plate ?? null, reason: opt(b.reason) || 'Cambio de vehículo' }); newVersion(t, 'Cambio de vehículo'); }
     return ok({ deca_version: t.deca?.version ?? null });
   }
   if ((x = m(/^\/transports\/([^/]+)\/cancel$/)) && method === 'POST') {
